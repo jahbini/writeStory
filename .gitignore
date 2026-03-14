@@ -1,6 +1,7 @@
 # vi
 *.swp
 [12].log
+*.tar
 
 node_modules/
 pnpm-lock.yaml
@@ -22,6 +23,7 @@ data_report.json
 eval_out/
 run*/
 dist/
+TrainTiny/
 
 # macOS
 .DS_Store

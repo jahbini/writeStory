@@ -1,7 +1,0 @@
-{
-  "run": "kag_oracle/md2segments.coffee",
-  "split_mode": "story",
-  "stories_md": "/Users/theaiguy/jim_stories/jim.md",
-  "marshalled_stories": "data/marshalled_stories.jsonl",
-  "depends_on": []
-}
