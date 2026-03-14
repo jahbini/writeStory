@@ -1,0 +1,7 @@
+{
+  "run": "kag_oracle/reply_merge.coffee",
+  "marshalled_stories": "data/marshalled_stories.jsonl",
+  "kag_emotions": "data/kag_emotions.jsonl",
+  "merged_segments": "data/merged_segments.jsonl",
+  "depends_on": []
+}

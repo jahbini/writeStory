@@ -1,0 +1,7 @@
+run: jim/load_library.coffee
+depends_on:
+  - download_model
+needs: []
+makes:
+  - story_library
+library_file: data/jim_story_library.yaml

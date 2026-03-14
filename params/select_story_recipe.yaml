@@ -1,0 +1,8 @@
+run: jim/select_story_recipe.coffee
+depends_on:
+  - load_library
+needs:
+  - story_library
+makes:
+  - story_recipe
+story_id: jim_0002

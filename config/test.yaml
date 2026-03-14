@@ -1,0 +1,96 @@
+# ============================================================
+# tests/test_pipeline.yaml
+# Memo-centric test recipe for evaluator
+# ============================================================
+
+run:
+  output_dir: out
+  data_dir: data
+  params_dir: params
+
+artifacts:
+  input_data:
+    target: data/input.json
+  transformed_data:
+    target: data/transformed.json
+  summary_row:
+    target: data/table.json
+  wait_data:
+    target: data/wait.json
+  final_summary_json:
+    target: data/final_summary.json
+  final_summary_yaml:
+    target: data/final_summary.yaml
+  final_summary_csv:
+    target: data/final_summary.csv
+  curl_result:
+    target: data/curl_result.json
+  python_result:
+    target: data/python_result.json
+
+# ------------------------------------------------------------
+# Step 1 — generate input
+# ------------------------------------------------------------
+step1_setup:
+  run: test/step1_setup.coffee
+  depends_on: []
+  needs: []
+  makes: [input_data]
+  greeting: "hello"
+  value: 42
+
+# ------------------------------------------------------------
+# Step 2 — transform input
+# ------------------------------------------------------------
+step2_transform:
+  run: test/step2_transform.coffee
+  depends_on: [step1_setup]
+  needs: [input_data]
+  makes: [transformed_data]
+
+# ------------------------------------------------------------
+# Step 3 — derive tabular summary
+# ------------------------------------------------------------
+step3_table:
+  run: test/step3_table.coffee
+  depends_on: [step2_transform]
+  needs: [transformed_data]
+  makes: [summary_row]
+
+# ------------------------------------------------------------
+# Step 4 — wait / synchronization test
+# ------------------------------------------------------------
+step4_wait:
+  run: test/step4_wait.coffee
+  depends_on: [step3_table]
+  needs: []
+  makes: [wait_data]
+
+# ------------------------------------------------------------
+# Step 5 — finalize outputs
+# ------------------------------------------------------------
+step5_finalize:
+  run: test/step5_finalize.coffee
+  depends_on: [step4_wait]
+  needs: [input_data, transformed_data, wait_data]
+  makes: [final_summary_json, final_summary_yaml, final_summary_csv]
+
+# ------------------------------------------------------------
+# Step 6 — external curl test
+# ------------------------------------------------------------
+test6_curl:
+  run: test/step6_curl.coffee
+  depends_on: [step5_finalize]
+  needs: [final_summary_json]
+  makes: [curl_result]
+  desc: "Spawn a bash curl command to verify external process integration"
+
+# ------------------------------------------------------------
+# Step 7 — python process test
+# ------------------------------------------------------------
+test7_python:
+  run: test/step7_python.coffee
+  depends_on: [test6_curl]
+  needs: [curl_result]
+  makes: [python_result]
+  desc: "Spawn a Python subprocess and capture output"

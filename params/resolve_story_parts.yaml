@@ -1,0 +1,8 @@
+run: jim/resolve_story_parts.coffee
+depends_on:
+  - select_story_recipe
+needs:
+  - story_library
+  - story_recipe
+makes:
+  - story_parts

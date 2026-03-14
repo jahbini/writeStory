@@ -1,0 +1,28 @@
+{
+  "story_id": "jim_0002",
+  "keys": {
+    "scene": "espresso_machine_hissing",
+    "arrival": "roger_stirs_coffee_absentmindedly",
+    "disturbance": "talk_radio_turning_irritation_into_anger",
+    "reflection": "rumors_spread_like_sparks_in_dry_grass",
+    "realization": "most_people_defend_habits_more_than_truth"
+  },
+  "scene": {
+    "text": "Espresso machine hissing",
+    "location": "town"
+  },
+  "arrival": {
+    "character": "Roger",
+    "text": "Roger stirs coffee absentmindedly"
+  },
+  "disturbance": {
+    "text": "Talk radio turning irritation into anger",
+    "theme": "mind_worm"
+  },
+  "reflection": {
+    "text": "Rumors spread like sparks in dry grass"
+  },
+  "realization": {
+    "text": "Most people defend habits more than truth"
+  }
+}

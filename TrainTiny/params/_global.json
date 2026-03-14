@@ -1,0 +1,19 @@
+{
+  "model": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+  "marshalled_segments": "data/marshalled_segments.jsonl",
+  "stories": "data/stories.jsonl",
+  "kag_examples": "data/kag_examples.jsonl",
+  "train_file": "loraland/train.jsonl",
+  "valid_file": "loraland/valid.jsonl",
+  "loraLand": "loraland",
+  "contract": "data_contract.json",
+  "catalog": "data_catalog.json",
+  "report": "data_report.json",
+  "prompt_policy": "prompt_policy.json",
+  "experiments_csv": "experiments.csv",
+  "artifacts": "artifacts.json",
+  "tokmeta": "tokenizer_meta.json",
+  "output_dir": "out",
+  "data_dir": "data",
+  "eval_dir": "eval_out"
+}

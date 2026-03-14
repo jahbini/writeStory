@@ -1,0 +1,76 @@
+{
+  "story_id": "jim_0002",
+  "text": "==========\nMike had always been a quiet man. He preferred solitude to socializing, and his quiet demeanor was part of what had drawn Tom to him. They had worked together for years on Mike's small consulting firm and, despite their busy schedules, had become fast friends.\n\nMike was one of the few people Tom had ever met who seemed to have an infinite store of wisdom and humor. And now that his time with Mike was drawing to a close, Tom found himself reflecting on all the things that Mike had taught him.\n\nOne morning, as Mike was leaving for the day, Tom stood up to shake his hand and thank him for everything.\n\n\"Thanks for everything, Mike,\" Tom said, feeling a little uncertain. \"It's been a real pleasure working with you.\"\n\nMike smiled. \"You're welcome. It's been my pleasure too.\"\n\nTom watched as Mike walked out the door, his arms laden with groceries. He felt a little sadness seep into his heart. Mike was a kindred spirit, someone he could trust implicitly. He knew he could always count on him.\n\nTom spent the rest of the morning reflecting on Mike's teachings. He thought about the things Mike had said to him, the way he had listened to him without judgment, the way he had helped him see the world in a new light.\n\nTom knew he had learned more from Mike than he ever would from anyone else. The important thing was his friendship with Mike, the way their lives had intersected and the way they had grown and changed over the years.\n\nAs he stepped out of the grocery store, Tom felt a sense of melancholy. He wondered if it was possible for people to truly be friends with someone they had never met, someone they had only known through a shared experience. He realized that, for all of Mike's quiet manner, there was something truly special about having a friend like Tom.\n\nTom felt a sense of sadness and wonder at the same time. He knew that, despite the distance between him and Mike, he and Tom would always have the benefit of the personal and emotional connection that Mike had helped him build.\n\nOver the next few weeks, Tom and Mike would continue to work on the same project, but they would do so without the comfort of each other's presence. The project was a success, but without the comfort of Mike's friendship, it would never have been possible.\n\nAs Tom walked home, he felt a sense of sadness and wonder at the same time. He realized that, even though he and Mike had never met, there was something truly special about having a friend like Tom. He thought about how lucky he was to have such a friend in his life.\n==========",
+  "source_story": {
+    "story_id": "jim_0002",
+    "text": "The espresso machine hissing.\n\nRoger stirs coffee absentmindedly.\n\nOn the radio, talk radio turning irritation into anger.\n\nRumors spread like sparks in dry grass.\n\nThat was when I realized most people defend habits more than truth.",
+    "parts": {
+      "story_id": "jim_0002",
+      "keys": {
+        "scene": "espresso_machine_hissing",
+        "arrival": "roger_stirs_coffee_absentmindedly",
+        "disturbance": "talk_radio_turning_irritation_into_anger",
+        "reflection": "rumors_spread_like_sparks_in_dry_grass",
+        "realization": "most_people_defend_habits_more_than_truth"
+      },
+      "source_parts": {
+        "story_id": "jim_0002",
+        "keys": {
+          "scene": "espresso_machine_hissing",
+          "arrival": "roger_stirs_coffee_absentmindedly",
+          "disturbance": "talk_radio_turning_irritation_into_anger",
+          "reflection": "rumors_spread_like_sparks_in_dry_grass",
+          "realization": "most_people_defend_habits_more_than_truth"
+        },
+        "scene": {
+          "text": "Espresso machine hissing",
+          "location": "town"
+        },
+        "arrival": {
+          "character": "Roger",
+          "text": "Roger stirs coffee absentmindedly"
+        },
+        "disturbance": {
+          "text": "Talk radio turning irritation into anger",
+          "theme": "mind_worm"
+        },
+        "reflection": {
+          "text": "Rumors spread like sparks in dry grass"
+        },
+        "realization": {
+          "text": "Most people defend habits more than truth"
+        }
+      },
+      "expanded_parts": {
+        "scene": {
+          "text": "The espresso machine hissing.",
+          "source_text": "Espresso machine hissing",
+          "location": "town",
+          "expansion_mode": "scene_narration"
+        },
+        "arrival": {
+          "text": "Roger stirs coffee absentmindedly.",
+          "source_text": "Roger stirs coffee absentmindedly",
+          "character": "Roger",
+          "expansion_mode": "arrival_narration"
+        },
+        "disturbance": {
+          "text": "On the radio, talk radio turning irritation into anger.",
+          "source_text": "Talk radio turning irritation into anger",
+          "theme": "mind_worm",
+          "expansion_mode": "disturbance_narration"
+        },
+        "reflection": {
+          "text": "Rumors spread like sparks in dry grass.",
+          "source_text": "Rumors spread like sparks in dry grass",
+          "expansion_mode": "reflection_narration"
+        },
+        "realization": {
+          "text": "That was when I realized most people defend habits more than truth.",
+          "source_text": "Most people defend habits more than truth",
+          "expansion_mode": "realization_narration"
+        }
+      }
+    }
+  }
+}

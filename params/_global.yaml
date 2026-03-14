@@ -1,0 +1,5 @@
+model: TinyLlama/TinyLlama-1.1B-Chat-v1.0
+loraLand: build/model
+output_dir: out
+data_dir: data
+params_dir: params

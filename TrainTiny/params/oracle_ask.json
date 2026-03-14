@@ -1,0 +1,8 @@
+{
+  "run": "kag_oracle/oracle_ask.coffee",
+  "batch_size": 4,
+  "marshalled_stories": "data/marshalled_stories.jsonl",
+  "kag_emotions": "data/kag_emotions.jsonl",
+  "max_tokens": 1000,
+  "depends_on": []
+}

@@ -1,0 +1,1072 @@
+{
+  "source_file": "/Users/jahbini/writeStory/data/jim_story_library.yaml",
+  "library": {
+    "scenes": {
+      "fog_rolling_into_the_harbor": {
+        "text": "Fog rolling into the harbor",
+        "location": "harbor"
+      },
+      "espresso_machine_hissing": {
+        "text": "Espresso machine hissing",
+        "location": "town"
+      },
+      "gulls_circling_over_docks": {
+        "text": "Gulls circling over docks",
+        "location": "harbor"
+      },
+      "rain_tapping_on_caf_windows": {
+        "text": "Rain tapping on café windows",
+        "location": "cafe"
+      },
+      "salt_wind_from_the_sea": {
+        "text": "Salt wind from the sea",
+        "location": "harbor"
+      },
+      "smell_of_burnt_scones": {
+        "text": "Smell of burnt scones",
+        "location": "town"
+      },
+      "morning_light_through_fog": {
+        "text": "Morning light through fog",
+        "location": "town"
+      },
+      "cold_wind_down_water_street": {
+        "text": "Cold wind down Water Street",
+        "location": "street"
+      },
+      "fishing_boats_creaking": {
+        "text": "Fishing boats creaking",
+        "location": "harbor"
+      },
+      "wet_pavement_reflecting_streetlights": {
+        "text": "Wet pavement reflecting streetlights",
+        "location": "street"
+      },
+      "harbor_bell_clanging": {
+        "text": "Harbor bell clanging",
+        "location": "harbor"
+      },
+      "steam_rising_from_coffee_cups": {
+        "text": "Steam rising from coffee cups",
+        "location": "cafe"
+      },
+      "snow_collecting_on_the_window": {
+        "text": "Snow collecting on the window",
+        "location": "cafe"
+      },
+      "street_musician_playing_softly": {
+        "text": "Street musician playing softly",
+        "location": "street"
+      },
+      "ferry_horn_echoing_across_the_bay": {
+        "text": "Ferry horn echoing across the bay",
+        "location": "harbor"
+      },
+      "warm_bakery_smell": {
+        "text": "Warm bakery smell",
+        "location": "cafe"
+      },
+      "wooden_chairs_scraping_the_caf_floor": {
+        "text": "Wooden chairs scraping the café floor",
+        "location": "cafe"
+      },
+      "seagulls_arguing_over_scraps": {
+        "text": "Seagulls arguing over scraps",
+        "location": "harbor"
+      },
+      "dim_yellow_caf_lights": {
+        "text": "Dim yellow café lights",
+        "location": "cafe"
+      },
+      "harbor_tide_slapping_the_pier": {
+        "text": "Harbor tide slapping the pier",
+        "location": "harbor"
+      },
+      "wind_rattling_the_caf_sign": {
+        "text": "Wind rattling the café sign",
+        "location": "cafe"
+      },
+      "fresh_bread_cooling_on_the_counter": {
+        "text": "Fresh bread cooling on the counter",
+        "location": "cafe"
+      },
+      "fishing_nets_drying_on_rails": {
+        "text": "Fishing nets drying on rails",
+        "location": "town"
+      },
+      "quiet_murmur_of_caf_conversations": {
+        "text": "Quiet murmur of café conversations",
+        "location": "cafe"
+      },
+      "old_newspaper_pages_rustling": {
+        "text": "Old newspaper pages rustling",
+        "location": "town"
+      },
+      "footsteps_on_wet_cobblestones": {
+        "text": "Footsteps on wet cobblestones",
+        "location": "street"
+      },
+      "distant_laughter_from_the_docks": {
+        "text": "Distant laughter from the docks",
+        "location": "harbor"
+      },
+      "fog_swallowing_the_harbor_lights": {
+        "text": "Fog swallowing the harbor lights",
+        "location": "harbor"
+      },
+      "coffee_grinder_buzzing": {
+        "text": "Coffee grinder buzzing",
+        "location": "cafe"
+      },
+      "evening_sun_on_the_water": {
+        "text": "Evening sun on the water",
+        "location": "town"
+      },
+      "chill_air_through_the_open_door": {
+        "text": "Chill air through the open door",
+        "location": "town"
+      },
+      "rain_dripping_from_umbrellas": {
+        "text": "Rain dripping from umbrellas",
+        "location": "town"
+      },
+      "streetlamp_flickering": {
+        "text": "Streetlamp flickering",
+        "location": "street"
+      },
+      "warm_mug_in_cold_hands": {
+        "text": "Warm mug in cold hands",
+        "location": "cafe"
+      },
+      "boat_engines_rumbling": {
+        "text": "Boat engines rumbling",
+        "location": "town"
+      },
+      "crates_of_fish_stacked_by_the_pier": {
+        "text": "Crates of fish stacked by the pier",
+        "location": "harbor"
+      },
+      "wind_tugging_at_jackets": {
+        "text": "Wind tugging at jackets",
+        "location": "town"
+      },
+      "napkins_fluttering_in_the_breeze": {
+        "text": "Napkins fluttering in the breeze",
+        "location": "town"
+      },
+      "clock_ticking_above_the_bar": {
+        "text": "Clock ticking above the bar",
+        "location": "cafe"
+      },
+      "harbor_lights_blinking_awake": {
+        "text": "Harbor lights blinking awake",
+        "location": "harbor"
+      },
+      "books_stacked_on_a_nearby_shelf": {
+        "text": "Books stacked on a nearby shelf",
+        "location": "town"
+      },
+      "kettle_whistling_behind_the_counter": {
+        "text": "Kettle whistling behind the counter",
+        "location": "cafe"
+      },
+      "cold_glass_against_warm_palms": {
+        "text": "Cold glass against warm palms",
+        "location": "town"
+      },
+      "old_radio_murmuring_softly": {
+        "text": "Old radio murmuring softly",
+        "location": "town"
+      },
+      "clouds_sliding_past_the_harbor": {
+        "text": "Clouds sliding past the harbor",
+        "location": "harbor"
+      },
+      "wood_smoke_drifting_from_chimneys": {
+        "text": "Wood smoke drifting from chimneys",
+        "location": "town"
+      },
+      "foot_traffic_fading_at_dusk": {
+        "text": "Foot traffic fading at dusk",
+        "location": "town"
+      },
+      "quiet_corner_table_by_the_window": {
+        "text": "Quiet corner table by the window",
+        "location": "cafe"
+      },
+      "fog_dampening_every_sound": {
+        "text": "Fog dampening every sound",
+        "location": "town"
+      }
+    },
+    "characters": {
+      "southwick_folds_his_newspaper_carefully": {
+        "character": "Southwick",
+        "text": "Southwick folds his newspaper carefully"
+      },
+      "roger_stirs_coffee_absentmindedly": {
+        "character": "Roger",
+        "text": "Roger stirs coffee absentmindedly"
+      },
+      "tommy_bursts_in_talking_loudly": {
+        "character": "Tommy",
+        "text": "Tommy bursts in talking loudly"
+      },
+      "a_stranger_leans_over_the_table": {
+        "character": "A stranger",
+        "text": "A stranger leans over the table"
+      },
+      "southwick_raises_an_eyebrow": {
+        "character": "Southwick",
+        "text": "Southwick raises an eyebrow"
+      },
+      "roger_scratches_his_beard_thoughtfully": {
+        "character": "Roger",
+        "text": "Roger scratches his beard thoughtfully"
+      },
+      "tommy_waves_his_phone_in_the_air": {
+        "character": "Tommy",
+        "text": "Tommy waves his phone in the air"
+      },
+      "the_bartender_wipes_the_counter_slowly": {
+        "character": "The bartender",
+        "text": "The bartender wipes the counter slowly"
+      },
+      "southwick_taps_the_table_lightly": {
+        "character": "Southwick",
+        "text": "Southwick taps the table lightly"
+      },
+      "roger_shrugs_with_a_sigh": {
+        "character": "Roger",
+        "text": "Roger shrugs with a sigh"
+      },
+      "tommy_drops_into_the_chair": {
+        "character": "Tommy",
+        "text": "Tommy drops into the chair"
+      },
+      "a_fisherman_sets_down_his_hat": {
+        "character": "A fisherman",
+        "text": "A fisherman sets down his hat"
+      },
+      "southwick_adjusts_his_glasses": {
+        "character": "Southwick",
+        "text": "Southwick adjusts his glasses"
+      },
+      "roger_points_toward_the_harbor": {
+        "character": "Roger",
+        "text": "Roger points toward the harbor"
+      },
+      "tommy_laughs_at_his_own_theory": {
+        "character": "Tommy",
+        "text": "Tommy laughs at his own theory"
+      },
+      "a_student_opens_a_notebook": {
+        "character": "A student",
+        "text": "A student opens a notebook"
+      },
+      "the_waitress_refills_a_cup_silently": {
+        "character": "The waitress",
+        "text": "The waitress refills a cup silently"
+      },
+      "southwick_watches_the_fog_outside": {
+        "character": "Southwick",
+        "text": "Southwick watches the fog outside"
+      },
+      "roger_tilts_his_head_skeptically": {
+        "character": "Roger",
+        "text": "Roger tilts his head skeptically"
+      },
+      "tommy_spreads_his_arms_dramatically": {
+        "character": "Tommy",
+        "text": "Tommy spreads his arms dramatically"
+      },
+      "a_passerby_pauses_to_listen": {
+        "character": "A passerby",
+        "text": "A passerby pauses to listen"
+      },
+      "southwick_nods_slowly": {
+        "character": "Southwick",
+        "text": "Southwick nods slowly"
+      },
+      "roger_drums_his_fingers": {
+        "character": "Roger",
+        "text": "Roger drums his fingers"
+      },
+      "tommy_leans_across_the_table": {
+        "character": "Tommy",
+        "text": "Tommy leans across the table"
+      },
+      "a_stranger_warms_hands_on_a_mug": {
+        "character": "A stranger",
+        "text": "A stranger warms hands on a mug"
+      },
+      "southwick_glances_at_the_clock": {
+        "character": "Southwick",
+        "text": "Southwick glances at the clock"
+      },
+      "roger_rubs_his_temples": {
+        "character": "Roger",
+        "text": "Roger rubs his temples"
+      },
+      "tommy_spins_a_wild_explanation": {
+        "character": "Tommy",
+        "text": "Tommy spins a wild explanation"
+      },
+      "a_fisherman_scratches_his_chin": {
+        "character": "A fisherman",
+        "text": "A fisherman scratches his chin"
+      },
+      "southwick_clears_his_throat": {
+        "character": "Southwick",
+        "text": "Southwick clears his throat"
+      },
+      "roger_looks_around_the_room": {
+        "character": "Roger",
+        "text": "Roger looks around the room"
+      },
+      "tommy_gestures_toward_the_street": {
+        "character": "Tommy",
+        "text": "Tommy gestures toward the street"
+      },
+      "a_student_asks_a_question": {
+        "character": "A student",
+        "text": "A student asks a question"
+      },
+      "southwick_folds_his_hands": {
+        "character": "Southwick",
+        "text": "Southwick folds his hands"
+      },
+      "roger_sighs_deeply": {
+        "character": "Roger",
+        "text": "Roger sighs deeply"
+      },
+      "tommy_points_at_the_sky": {
+        "character": "Tommy",
+        "text": "Tommy points at the sky"
+      },
+      "the_bartender_raises_an_eyebrow": {
+        "character": "The bartender",
+        "text": "The bartender raises an eyebrow"
+      },
+      "southwick_taps_his_spoon": {
+        "character": "Southwick",
+        "text": "Southwick taps his spoon"
+      },
+      "roger_leans_back_heavily": {
+        "character": "Roger",
+        "text": "Roger leans back heavily"
+      },
+      "tommy_laughs_again": {
+        "character": "Tommy",
+        "text": "Tommy laughs again"
+      },
+      "a_passerby_shakes_their_head": {
+        "character": "A passerby",
+        "text": "A passerby shakes their head"
+      },
+      "southwick_sips_tea_slowly": {
+        "character": "Southwick",
+        "text": "Southwick sips tea slowly"
+      },
+      "roger_watches_people_outside": {
+        "character": "Roger",
+        "text": "Roger watches people outside"
+      },
+      "tommy_leans_back_triumphantly": {
+        "character": "Tommy",
+        "text": "Tommy leans back triumphantly"
+      },
+      "the_waitress_smiles_briefly": {
+        "character": "The waitress",
+        "text": "The waitress smiles briefly"
+      },
+      "southwick_studies_the_room": {
+        "character": "Southwick",
+        "text": "Southwick studies the room"
+      },
+      "roger_finishes_his_coffee": {
+        "character": "Roger",
+        "text": "Roger finishes his coffee"
+      },
+      "tommy_nods_emphatically": {
+        "character": "Tommy",
+        "text": "Tommy nods emphatically"
+      }
+    },
+    "disturbances": {
+      "people_repeating_slogans_without_knowing_their_o": {
+        "text": "People repeating slogans without knowing their origin",
+        "theme": "mind_worm"
+      },
+      "talk_radio_turning_irritation_into_anger": {
+        "text": "Talk radio turning irritation into anger",
+        "theme": "mind_worm"
+      },
+      "news_cycles_that_keep_everyone_slightly_afraid": {
+        "text": "News cycles that keep everyone slightly afraid",
+        "theme": "mind_worm"
+      },
+      "arguments_online_that_nobody_actually_reads": {
+        "text": "Arguments online that nobody actually reads",
+        "theme": "mind_worm"
+      },
+      "crowds_believing_headlines_more_than_events": {
+        "text": "Crowds believing headlines more than events",
+        "theme": "mind_worm"
+      },
+      "people_forwarding_rumors_before_checking_them": {
+        "text": "People forwarding rumors before checking them",
+        "theme": "mind_worm"
+      },
+      "outrage_spreading_faster_than_facts": {
+        "text": "Outrage spreading faster than facts",
+        "theme": "mind_worm"
+      },
+      "neighbors_repeating_the_same_complaint_every_wee": {
+        "text": "Neighbors repeating the same complaint every week",
+        "theme": "mind_worm"
+      },
+      "conversations_that_sound_identical_across_town": {
+        "text": "Conversations that sound identical across town",
+        "theme": "mind_worm"
+      },
+      "people_defending_ideas_they_heard_yesterday": {
+        "text": "People defending ideas they heard yesterday",
+        "theme": "mind_worm"
+      },
+      "anger_triggered_by_something_nobody_witnessed": {
+        "text": "Anger triggered by something nobody witnessed",
+        "theme": "mind_worm"
+      },
+      "stories_growing_larger_each_time_they_are_told": {
+        "text": "Stories growing larger each time they are told",
+        "theme": "mind_worm"
+      },
+      "rumors_traveling_faster_than_the_ferry": {
+        "text": "Rumors traveling faster than the ferry",
+        "theme": "mind_worm"
+      },
+      "citizens_arguing_about_something_trivial": {
+        "text": "Citizens arguing about something trivial",
+        "theme": "mind_worm"
+      },
+      "people_mistaking_repetition_for_truth": {
+        "text": "People mistaking repetition for truth",
+        "theme": "mind_worm"
+      },
+      "every_caf_table_repeating_the_same_complaint": {
+        "text": "Every café table repeating the same complaint",
+        "theme": "mind_worm"
+      },
+      "fear_spreading_after_a_vague_warning": {
+        "text": "Fear spreading after a vague warning",
+        "theme": "mind_worm"
+      },
+      "strangers_arguing_over_something_they_read_onlin": {
+        "text": "Strangers arguing over something they read online",
+        "theme": "mind_worm"
+      },
+      "old_myths_reappearing_in_new_language": {
+        "text": "Old myths reappearing in new language",
+        "theme": "mind_worm"
+      },
+      "people_quoting_experts_they_never_read": {
+        "text": "People quoting experts they never read",
+        "theme": "mind_worm"
+      },
+      "conspiracy_theories_appearing_overnight": {
+        "text": "Conspiracy theories appearing overnight",
+        "theme": "mind_worm"
+      },
+      "neighbors_repeating_the_same_political_phrase": {
+        "text": "Neighbors repeating the same political phrase",
+        "theme": "mind_worm"
+      },
+      "arguments_fueled_by_half_remembered_facts": {
+        "text": "Arguments fueled by half‑remembered facts",
+        "theme": "mind_worm"
+      },
+      "people_sharing_outrage_as_entertainment": {
+        "text": "People sharing outrage as entertainment",
+        "theme": "mind_worm"
+      },
+      "town_gossip_mutating_like_a_virus": {
+        "text": "Town gossip mutating like a virus",
+        "theme": "mind_worm"
+      },
+      "citizens_repeating_statistics_they_never_checked": {
+        "text": "Citizens repeating statistics they never checked",
+        "theme": "mind_worm"
+      },
+      "social_media_amplifying_the_loudest_voices": {
+        "text": "Social media amplifying the loudest voices",
+        "theme": "mind_worm"
+      },
+      "people_outraged_by_headlines_they_didnt_finish": {
+        "text": "People outraged by headlines they didn’t finish",
+        "theme": "mind_worm"
+      },
+      "political_slogans_replacing_conversation": {
+        "text": "Political slogans replacing conversation",
+        "theme": "mind_worm"
+      },
+      "every_argument_ending_with_the_same_talking_poin": {
+        "text": "Every argument ending with the same talking points",
+        "theme": "mind_worm"
+      },
+      "citizens_afraid_of_something_nobody_can_explain": {
+        "text": "Citizens afraid of something nobody can explain",
+        "theme": "mind_worm"
+      },
+      "people_repeating_historical_myths": {
+        "text": "People repeating historical myths",
+        "theme": "mind_worm"
+      },
+      "rumors_circulating_through_the_harbor_bars": {
+        "text": "Rumors circulating through the harbor bars",
+        "theme": "mind_worm"
+      },
+      "online_arguments_spreading_into_real_life": {
+        "text": "Online arguments spreading into real life",
+        "theme": "mind_worm"
+      },
+      "citizens_afraid_to_question_popular_ideas": {
+        "text": "Citizens afraid to question popular ideas",
+        "theme": "mind_worm"
+      },
+      "people_repeating_warnings_without_evidence": {
+        "text": "People repeating warnings without evidence",
+        "theme": "mind_worm"
+      },
+      "old_grievances_revived_by_new_rumors": {
+        "text": "Old grievances revived by new rumors",
+        "theme": "mind_worm"
+      },
+      "anger_spreading_through_short_video_clips": {
+        "text": "Anger spreading through short video clips",
+        "theme": "mind_worm"
+      },
+      "citizens_arguing_about_a_misunderstood_event": {
+        "text": "Citizens arguing about a misunderstood event",
+        "theme": "mind_worm"
+      },
+      "people_repeating_jokes_that_hide_hostility": {
+        "text": "People repeating jokes that hide hostility",
+        "theme": "mind_worm"
+      },
+      "neighbors_repeating_exaggerated_crime_stories": {
+        "text": "Neighbors repeating exaggerated crime stories",
+        "theme": "mind_worm"
+      },
+      "online_debates_replacing_real_discussions": {
+        "text": "Online debates replacing real discussions",
+        "theme": "mind_worm"
+      },
+      "people_defending_opinions_they_barely_hold": {
+        "text": "People defending opinions they barely hold",
+        "theme": "mind_worm"
+      },
+      "arguments_fueled_by_edited_videos": {
+        "text": "Arguments fueled by edited videos",
+        "theme": "mind_worm"
+      },
+      "citizens_convinced_the_world_is_collapsing": {
+        "text": "Citizens convinced the world is collapsing",
+        "theme": "mind_worm"
+      },
+      "people_repeating_numbers_without_context": {
+        "text": "People repeating numbers without context",
+        "theme": "mind_worm"
+      },
+      "fear_spreading_through_vague_statistics": {
+        "text": "Fear spreading through vague statistics",
+        "theme": "mind_worm"
+      },
+      "town_meetings_dominated_by_loud_voices": {
+        "text": "Town meetings dominated by loud voices",
+        "theme": "mind_worm"
+      },
+      "people_mistaking_sarcasm_for_fact": {
+        "text": "People mistaking sarcasm for fact",
+        "theme": "mind_worm"
+      },
+      "citizens_arguing_about_something_trivial_2": {
+        "text": "Citizens arguing about something trivial",
+        "theme": "mind_worm"
+      },
+      "people_repeating_predictions_of_disaster": {
+        "text": "People repeating predictions of disaster",
+        "theme": "mind_worm"
+      },
+      "rumors_spreading_through_messaging_apps": {
+        "text": "Rumors spreading through messaging apps",
+        "theme": "mind_worm"
+      },
+      "citizens_outraged_by_a_misunderstanding": {
+        "text": "Citizens outraged by a misunderstanding",
+        "theme": "mind_worm"
+      },
+      "people_repeating_phrases_designed_to_provoke": {
+        "text": "People repeating phrases designed to provoke",
+        "theme": "mind_worm"
+      },
+      "arguments_escalating_over_tiny_differences": {
+        "text": "Arguments escalating over tiny differences",
+        "theme": "mind_worm"
+      },
+      "citizens_sharing_fear_disguised_as_advice": {
+        "text": "Citizens sharing fear disguised as advice",
+        "theme": "mind_worm"
+      },
+      "people_defending_beliefs_as_identity": {
+        "text": "People defending beliefs as identity",
+        "theme": "mind_worm"
+      },
+      "rumors_spreading_through_humor": {
+        "text": "Rumors spreading through humor",
+        "theme": "mind_worm"
+      },
+      "people_repeating_accusations_without_evidence": {
+        "text": "People repeating accusations without evidence",
+        "theme": "mind_worm"
+      },
+      "citizens_afraid_of_unfamiliar_ideas": {
+        "text": "Citizens afraid of unfamiliar ideas",
+        "theme": "mind_worm"
+      },
+      "arguments_spreading_through_copied_posts": {
+        "text": "Arguments spreading through copied posts",
+        "theme": "mind_worm"
+      },
+      "citizens_repeating_warnings_from_strangers": {
+        "text": "Citizens repeating warnings from strangers",
+        "theme": "mind_worm"
+      },
+      "people_repeating_stories_they_cannot_verify": {
+        "text": "People repeating stories they cannot verify",
+        "theme": "mind_worm"
+      },
+      "rumors_growing_through_exaggeration": {
+        "text": "Rumors growing through exaggeration",
+        "theme": "mind_worm"
+      },
+      "citizens_convinced_everyone_else_is_wrong": {
+        "text": "Citizens convinced everyone else is wrong",
+        "theme": "mind_worm"
+      },
+      "people_repeating_dramatic_interpretations": {
+        "text": "People repeating dramatic interpretations",
+        "theme": "mind_worm"
+      },
+      "arguments_fueled_by_selective_memory": {
+        "text": "Arguments fueled by selective memory",
+        "theme": "mind_worm"
+      },
+      "citizens_sharing_fear_as_if_it_were_wisdom": {
+        "text": "Citizens sharing fear as if it were wisdom",
+        "theme": "mind_worm"
+      },
+      "people_repeating_authority_without_evidence": {
+        "text": "People repeating authority without evidence",
+        "theme": "mind_worm"
+      },
+      "rumors_spreading_through_casual_conversation": {
+        "text": "Rumors spreading through casual conversation",
+        "theme": "mind_worm"
+      },
+      "citizens_misinterpreting_harmless_events": {
+        "text": "Citizens misinterpreting harmless events",
+        "theme": "mind_worm"
+      },
+      "people_repeating_emotional_headlines": {
+        "text": "People repeating emotional headlines",
+        "theme": "mind_worm"
+      },
+      "arguments_spreading_faster_than_explanations": {
+        "text": "Arguments spreading faster than explanations",
+        "theme": "mind_worm"
+      },
+      "citizens_repeating_ancient_fears_in_modern_langu": {
+        "text": "Citizens repeating ancient fears in modern language",
+        "theme": "mind_worm"
+      },
+      "people_repeating_slogans_designed_to_divide": {
+        "text": "People repeating slogans designed to divide",
+        "theme": "mind_worm"
+      },
+      "rumors_amplified_by_uncertainty": {
+        "text": "Rumors amplified by uncertainty",
+        "theme": "mind_worm"
+      },
+      "citizens_mistaking_confidence_for_knowledge": {
+        "text": "Citizens mistaking confidence for knowledge",
+        "theme": "mind_worm"
+      },
+      "people_repeating_insults_disguised_as_arguments": {
+        "text": "People repeating insults disguised as arguments",
+        "theme": "mind_worm"
+      },
+      "arguments_spreading_through_short_messages": {
+        "text": "Arguments spreading through short messages",
+        "theme": "mind_worm"
+      },
+      "citizens_repeating_stories_that_flatter_them": {
+        "text": "Citizens repeating stories that flatter them",
+        "theme": "mind_worm"
+      },
+      "people_repeating_beliefs_from_their_group": {
+        "text": "People repeating beliefs from their group",
+        "theme": "mind_worm"
+      },
+      "rumors_spreading_through_half_heard_conversation": {
+        "text": "Rumors spreading through half‑heard conversations",
+        "theme": "mind_worm"
+      },
+      "citizens_defending_ideas_they_barely_understand": {
+        "text": "Citizens defending ideas they barely understand",
+        "theme": "mind_worm"
+      },
+      "people_repeating_emotional_reactions": {
+        "text": "People repeating emotional reactions",
+        "theme": "mind_worm"
+      },
+      "arguments_growing_through_misunderstanding": {
+        "text": "Arguments growing through misunderstanding",
+        "theme": "mind_worm"
+      },
+      "citizens_repeating_warnings_about_the_future": {
+        "text": "Citizens repeating warnings about the future",
+        "theme": "mind_worm"
+      },
+      "people_repeating_convenient_explanations": {
+        "text": "People repeating convenient explanations",
+        "theme": "mind_worm"
+      },
+      "rumors_spreading_through_community_gossip": {
+        "text": "Rumors spreading through community gossip",
+        "theme": "mind_worm"
+      },
+      "citizens_reacting_before_thinking": {
+        "text": "Citizens reacting before thinking",
+        "theme": "mind_worm"
+      },
+      "people_repeating_fear_from_television": {
+        "text": "People repeating fear from television",
+        "theme": "mind_worm"
+      },
+      "arguments_escalating_through_pride": {
+        "text": "Arguments escalating through pride",
+        "theme": "mind_worm"
+      },
+      "citizens_repeating_simple_answers_to_complex_pro": {
+        "text": "Citizens repeating simple answers to complex problems",
+        "theme": "mind_worm"
+      },
+      "people_repeating_what_their_friends_believe": {
+        "text": "People repeating what their friends believe",
+        "theme": "mind_worm"
+      },
+      "rumors_spreading_through_casual_speculation": {
+        "text": "Rumors spreading through casual speculation",
+        "theme": "mind_worm"
+      },
+      "citizens_repeating_anger_from_strangers": {
+        "text": "Citizens repeating anger from strangers",
+        "theme": "mind_worm"
+      },
+      "people_repeating_familiar_narratives": {
+        "text": "People repeating familiar narratives",
+        "theme": "mind_worm"
+      },
+      "arguments_that_nobody_intends_to_resolve": {
+        "text": "Arguments that nobody intends to resolve",
+        "theme": "mind_worm"
+      },
+      "citizens_repeating_stories_that_justify_fear": {
+        "text": "Citizens repeating stories that justify fear",
+        "theme": "mind_worm"
+      },
+      "people_repeating_beliefs_because_everyone_else_d": {
+        "text": "People repeating beliefs because everyone else does",
+        "theme": "mind_worm"
+      },
+      "rumors_spreading_because_silence_feels_uncomfort": {
+        "text": "Rumors spreading because silence feels uncomfortable",
+        "theme": "mind_worm"
+      }
+    },
+    "reflections": {
+      "ideas_move_through_towns_like_fog": {
+        "text": "Ideas move through towns like fog"
+      },
+      "rumors_spread_like_sparks_in_dry_grass": {
+        "text": "Rumors spread like sparks in dry grass"
+      },
+      "fear_runs_through_crowds_like_electricity": {
+        "text": "Fear runs through crowds like electricity"
+      },
+      "arguments_multiply_like_bacteria": {
+        "text": "Arguments multiply like bacteria"
+      },
+      "truth_travels_slower_than_gossip": {
+        "text": "Truth travels slower than gossip"
+      },
+      "memes_drift_like_pollen_in_spring": {
+        "text": "Memes drift like pollen in spring"
+      },
+      "thoughts_echo_like_bells_across_water": {
+        "text": "Thoughts echo like bells across water"
+      },
+      "habits_grow_like_weeds_in_quiet_corners": {
+        "text": "Habits grow like weeds in quiet corners"
+      },
+      "outrage_burns_like_quick_paper": {
+        "text": "Outrage burns like quick paper"
+      },
+      "beliefs_settle_like_dust_on_shelves": {
+        "text": "Beliefs settle like dust on shelves"
+      },
+      "questions_ripple_like_stones_in_water": {
+        "text": "Questions ripple like stones in water"
+      },
+      "stories_travel_like_migrating_birds": {
+        "text": "Stories travel like migrating birds"
+      },
+      "attention_flows_like_a_tide": {
+        "text": "Attention flows like a tide"
+      },
+      "noise_rises_like_storm_waves": {
+        "text": "Noise rises like storm waves"
+      },
+      "doubts_creep_like_evening_shadows": {
+        "text": "Doubts creep like evening shadows"
+      },
+      "certainty_freezes_like_winter_ice": {
+        "text": "Certainty freezes like winter ice"
+      },
+      "curiosity_opens_like_a_window": {
+        "text": "Curiosity opens like a window"
+      },
+      "lies_stack_like_crooked_bricks": {
+        "text": "Lies stack like crooked bricks"
+      },
+      "patterns_appear_like_constellations": {
+        "text": "Patterns appear like constellations"
+      },
+      "wisdom_grows_like_slow_roots": {
+        "text": "Wisdom grows like slow roots"
+      },
+      "anger_spreads_like_wildfire": {
+        "text": "Anger spreads like wildfire"
+      },
+      "calm_settles_like_snow": {
+        "text": "Calm settles like snow"
+      },
+      "rumors_bounce_like_echoes": {
+        "text": "Rumors bounce like echoes"
+      },
+      "ideas_bloom_like_algae_in_sunlight": {
+        "text": "Ideas bloom like algae in sunlight"
+      },
+      "confusion_swirls_like_harbor_mist": {
+        "text": "Confusion swirls like harbor mist"
+      },
+      "truth_flickers_like_a_lighthouse": {
+        "text": "Truth flickers like a lighthouse"
+      },
+      "thoughts_gather_like_clouds": {
+        "text": "Thoughts gather like clouds"
+      },
+      "understanding_unfolds_like_a_map": {
+        "text": "Understanding unfolds like a map"
+      },
+      "suspicion_crawls_like_ivy": {
+        "text": "Suspicion crawls like ivy"
+      },
+      "excuses_pile_like_driftwood": {
+        "text": "Excuses pile like driftwood"
+      },
+      "insight_strikes_like_lightning": {
+        "text": "Insight strikes like lightning"
+      },
+      "arguments_circle_like_gulls": {
+        "text": "Arguments circle like gulls"
+      },
+      "noise_fills_a_room_like_smoke": {
+        "text": "Noise fills a room like smoke"
+      },
+      "silence_spreads_like_calm_water": {
+        "text": "Silence spreads like calm water"
+      },
+      "hope_glows_like_dawn_light": {
+        "text": "Hope glows like dawn light"
+      },
+      "doubt_hums_like_distant_engines": {
+        "text": "Doubt hums like distant engines"
+      },
+      "memory_drifts_like_seaweed": {
+        "text": "Memory drifts like seaweed"
+      },
+      "belief_anchors_like_a_heavy_stone": {
+        "text": "Belief anchors like a heavy stone"
+      },
+      "curiosity_sparks_like_flint": {
+        "text": "Curiosity sparks like flint"
+      },
+      "rumor_floats_like_a_loose_buoy": {
+        "text": "Rumor floats like a loose buoy"
+      },
+      "old_wisdom_sleeps_like_buried_treasure": {
+        "text": "Old wisdom sleeps like buried treasure"
+      },
+      "human_habits_turn_like_seasons": {
+        "text": "Human habits turn like seasons"
+      }
+    },
+    "realizations": {
+      "the_loudest_ideas_are_rarely_the_wisest": {
+        "text": "The loudest ideas are rarely the wisest"
+      },
+      "most_people_defend_habits_more_than_truth": {
+        "text": "Most people defend habits more than truth"
+      },
+      "fear_rarely_waits_for_evidence": {
+        "text": "Fear rarely waits for evidence"
+      },
+      "a_repeated_lie_eventually_sounds_ordinary": {
+        "text": "A repeated lie eventually sounds ordinary"
+      },
+      "thinking_is_harder_than_repeating": {
+        "text": "Thinking is harder than repeating"
+      },
+      "crowds_prefer_certainty_over_accuracy": {
+        "text": "Crowds prefer certainty over accuracy"
+      },
+      "noise_often_hides_the_simplest_truths": {
+        "text": "Noise often hides the simplest truths"
+      },
+      "people_notice_drama_before_wisdom": {
+        "text": "People notice drama before wisdom"
+      },
+      "attention_decides_what_survives": {
+        "text": "Attention decides what survives"
+      },
+      "silence_can_be_wiser_than_argument": {
+        "text": "Silence can be wiser than argument"
+      },
+      "confusion_grows_where_curiosity_dies": {
+        "text": "Confusion grows where curiosity dies"
+      },
+      "habits_shape_beliefs_quietly": {
+        "text": "Habits shape beliefs quietly"
+      },
+      "anger_spreads_faster_than_understanding": {
+        "text": "Anger spreads faster than understanding"
+      },
+      "history_mostly_repeats_emotions": {
+        "text": "History mostly repeats emotions"
+      },
+      "wisdom_arrives_slowly_and_leaves_quietly": {
+        "text": "Wisdom arrives slowly and leaves quietly"
+      },
+      "ideas_survive_by_repetition": {
+        "text": "Ideas survive by repetition"
+      },
+      "truth_usually_whispers": {
+        "text": "Truth usually whispers"
+      },
+      "simple_observations_outlive_loud_theories": {
+        "text": "Simple observations outlive loud theories"
+      },
+      "human_nature_loves_patterns": {
+        "text": "Human nature loves patterns"
+      },
+      "most_arguments_protect_identity": {
+        "text": "Most arguments protect identity"
+      },
+      "the_easiest_thought_is_the_borrowed_one": {
+        "text": "The easiest thought is the borrowed one"
+      },
+      "fear_thrives_on_imagination": {
+        "text": "Fear thrives on imagination"
+      },
+      "reality_rarely_matches_the_rumor": {
+        "text": "Reality rarely matches the rumor"
+      },
+      "patience_reveals_hidden_patterns": {
+        "text": "Patience reveals hidden patterns"
+      },
+      "attention_is_the_gatekeeper_of_thought": {
+        "text": "Attention is the gatekeeper of thought"
+      },
+      "noise_rewards_exaggeration": {
+        "text": "Noise rewards exaggeration"
+      },
+      "habits_build_invisible_prisons": {
+        "text": "Habits build invisible prisons"
+      },
+      "wisdom_begins_with_noticing": {
+        "text": "Wisdom begins with noticing"
+      },
+      "anger_burns_quickly_but_thinking_lasts": {
+        "text": "Anger burns quickly but thinking lasts"
+      },
+      "ideas_become_culture_through_repetition": {
+        "text": "Ideas become culture through repetition"
+      },
+      "people_trust_familiar_stories": {
+        "text": "People trust familiar stories"
+      },
+      "calm_thinking_is_revolutionary": {
+        "text": "Calm thinking is revolutionary"
+      },
+      "questions_weaken_false_certainty": {
+        "text": "Questions weaken false certainty"
+      },
+      "truth_prefers_patient_minds": {
+        "text": "Truth prefers patient minds"
+      },
+      "fear_feeds_the_loudest_voices": {
+        "text": "Fear feeds the loudest voices"
+      },
+      "small_insights_reshape_big_ideas": {
+        "text": "Small insights reshape big ideas"
+      },
+      "understanding_requires_slowing_down": {
+        "text": "Understanding requires slowing down"
+      },
+      "most_wisdom_hides_in_ordinary_moments": {
+        "text": "Most wisdom hides in ordinary moments"
+      },
+      "human_beings_repeat_themselves": {
+        "text": "Human beings repeat themselves"
+      },
+      "observation_is_the_beginning_of_wisdom": {
+        "text": "Observation is the beginning of wisdom"
+      }
+    }
+  },
+  "stories": {
+    "jim_0001": {
+      "scene": "fog_rolling_into_the_harbor",
+      "arrival": "southwick_folds_his_newspaper_carefully",
+      "disturbance": "people_repeating_slogans_without_knowing_their_o",
+      "reflection": "ideas_move_through_towns_like_fog",
+      "realization": "the_loudest_ideas_are_rarely_the_wisest"
+    },
+    "jim_0002": {
+      "scene": "espresso_machine_hissing",
+      "arrival": "roger_stirs_coffee_absentmindedly",
+      "disturbance": "talk_radio_turning_irritation_into_anger",
+      "reflection": "rumors_spread_like_sparks_in_dry_grass",
+      "realization": "most_people_defend_habits_more_than_truth"
+    },
+    "jim_0003": {
+      "scene": "gulls_circling_over_docks",
+      "arrival": "tommy_bursts_in_talking_loudly",
+      "disturbance": "news_cycles_that_keep_everyone_slightly_afraid",
+      "reflection": "fear_runs_through_crowds_like_electricity",
+      "realization": "fear_rarely_waits_for_evidence"
+    }
+  }
+}

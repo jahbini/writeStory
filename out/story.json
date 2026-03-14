@@ -1,0 +1,72 @@
+{
+  "story_id": "jim_0002",
+  "text": "The espresso machine hissing.\n\nRoger stirs coffee absentmindedly.\n\nOn the radio, talk radio turning irritation into anger.\n\nRumors spread like sparks in dry grass.\n\nThat was when I realized most people defend habits more than truth.",
+  "parts": {
+    "story_id": "jim_0002",
+    "keys": {
+      "scene": "espresso_machine_hissing",
+      "arrival": "roger_stirs_coffee_absentmindedly",
+      "disturbance": "talk_radio_turning_irritation_into_anger",
+      "reflection": "rumors_spread_like_sparks_in_dry_grass",
+      "realization": "most_people_defend_habits_more_than_truth"
+    },
+    "source_parts": {
+      "story_id": "jim_0002",
+      "keys": {
+        "scene": "espresso_machine_hissing",
+        "arrival": "roger_stirs_coffee_absentmindedly",
+        "disturbance": "talk_radio_turning_irritation_into_anger",
+        "reflection": "rumors_spread_like_sparks_in_dry_grass",
+        "realization": "most_people_defend_habits_more_than_truth"
+      },
+      "scene": {
+        "text": "Espresso machine hissing",
+        "location": "town"
+      },
+      "arrival": {
+        "character": "Roger",
+        "text": "Roger stirs coffee absentmindedly"
+      },
+      "disturbance": {
+        "text": "Talk radio turning irritation into anger",
+        "theme": "mind_worm"
+      },
+      "reflection": {
+        "text": "Rumors spread like sparks in dry grass"
+      },
+      "realization": {
+        "text": "Most people defend habits more than truth"
+      }
+    },
+    "expanded_parts": {
+      "scene": {
+        "text": "The espresso machine hissing.",
+        "source_text": "Espresso machine hissing",
+        "location": "town",
+        "expansion_mode": "scene_narration"
+      },
+      "arrival": {
+        "text": "Roger stirs coffee absentmindedly.",
+        "source_text": "Roger stirs coffee absentmindedly",
+        "character": "Roger",
+        "expansion_mode": "arrival_narration"
+      },
+      "disturbance": {
+        "text": "On the radio, talk radio turning irritation into anger.",
+        "source_text": "Talk radio turning irritation into anger",
+        "theme": "mind_worm",
+        "expansion_mode": "disturbance_narration"
+      },
+      "reflection": {
+        "text": "Rumors spread like sparks in dry grass.",
+        "source_text": "Rumors spread like sparks in dry grass",
+        "expansion_mode": "reflection_narration"
+      },
+      "realization": {
+        "text": "That was when I realized most people defend habits more than truth.",
+        "source_text": "Most people defend habits more than truth",
+        "expansion_mode": "realization_narration"
+      }
+    }
+  }
+}

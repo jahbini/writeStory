@@ -1,0 +1,94 @@
+[md2segments] output already exists — skipping
+[oracle_ask] pending: 4
+[oracle_ask] tagged the-toy-store-that-kills-md 001
+[oracle_ask] tagged the-tropic-of-oregon-md 001
+[oracle_ask] tagged the-worst-of-plans-the-best-of-plans-md 001
+[oracle_ask] tagged they-leave-the-west-behind-md 001
+[reply_merge] merged segments: 254
+[rotate_merged]
+  merged rows: 254
+  new train pairs: 253
+  skipped (non-seq): 253
+  old train: 245
+  old valid: 3635
+  → new valid: 3880
+[lora_train]
+  train rows: 253
+  valid rows: 3880
+[lora_train] MLX args: {
+  train: null,
+  model: 'TinyLlama/TinyLlama-1.1B-Chat-v1.0',
+  data: 'loraland',
+  'adapter-path': 'loraland/adapter',
+  'batch-size': 1,
+  iters: 200,
+  'max-seq-length': 1024,
+  'learning-rate': 0.00005
+}
+=== GENERATION ===
+{ prompt: 'we went to Portland and this happened' }
+
+--- model output ---
+
+==========
+friend, I m writing this from the James John Cafe, where I m enjoying a plate of scrambled eggs with spinach and cheese. I m sharing this with Southwick over at the bar. He tells me that he has a problem: He is having trouble with his final exams.
+
+Southwick has been attending the same college for the past eight years. He is a master's candidate in the most important subject: himself.
+
+Southwick has been diagnosed with an extreme phobia of humanity. In his free time, he performs public examinations of his fellow students: Smiling, nodding, and writing excellent grades on his paperwork. That s the rule. Only a small percentage of students actually sit through an exam like this.
+
+The fear of humanity is so intense that he has trouble concentrating. He can t focus on any one thing for more than a few seconds. He says that he s not a bad person, but his exams are so stressful that he has not been able to achieve a normal level of functioning in his personal life. He has been on disability since 2005.
+
+I asked Southwick if he had tried any new techniques to deal with his phobia. He said that he has talked to the Dean of Students, the Dean of Dramatic Activities, and the Dean of Academic Research all about his problems. He has been to therapy sessions and is on the verge of getting a grant to study the effects of honey on phobias.
+
+Southwick says that the Dean s are very receptive and want to help. He is very interested in the Honey of the Gutter method: A street-dweller s solution to phobias. He has the recipe here in his notebook:
+
+> Recipe for Honey of the Gutter
+>
+> Ingredients:
+>
+> - 250 grams ground chicken
+> - 250 grams ground beef
+> - 2 cups flour
+> - 1 1/2 cups chicken broth
+> - 2 cups water
+> - 1 teaspoon salt
+> - 1 teaspoon black pepper
+> - 1 teaspoon garlic powder
+> - 1/4 cup honey
+
+Instructions:
+
+1. Preheat oven to 350 degrees. Line a baking sheet with parchment paper.
+
+2. In a food processor, combine ground chicken, ground beef, flour, broth, water, salt, pepper, and garlic powder. Pulse a few times to blend.
+
+3. Transfer the mixture to a bowl and stir in the honey.
+
+4. Press the mixture into the prepared baking sheet, using a spoon or spatula to spread evenly.
+
+5. Bake for 10-15 minutes or until the top is golden brown.
+
+6. Let cool on the baking sheet for 10 minutes.
+
+7. Remove with a spatula, and cut into slices.
+
+Taste:
+
+Southwick took a few slices and said: They have a real kick, you know.
+
+I asked him if he would be happy to have another slice. He said he would love to, but he needs to be careful with his phobia.
+
+Me: So you eat honey of the gutter? 
+
+He looks at me intently. I have no idea what he means. I m not sure if I want to know.
+
+S
+==========
+Prompt: 20 tokens, 204.362 tokens-per-sec
+Generation: 800 tokens, 39.956 tokens-per-sec
+Peak memory: 2.273 GB
+
+
+=== 🌟 Pipeline finished (final: md2segments, oracle_ask, reply_merge, rotate_merged, lora_train, talk_story) ===
+

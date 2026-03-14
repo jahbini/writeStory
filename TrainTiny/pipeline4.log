@@ -1,0 +1,52 @@
+[md2segments] output already exists — skipping
+[oracle_ask] pending: 4
+[oracle_ask] tagged tommy-believes-in-magic-md 001
+[oracle_ask] tagged tommy-or-recycles-md 001
+[oracle_ask] tagged tommy-starts-a-bed-and-breakfast-md 001
+[oracle_ask] tagged tommys-web-catches-steven-and-bambi-md 001
+[reply_merge] merged segments: 262
+[rotate_merged]
+  merged rows: 262
+  new train pairs: 261
+  skipped (non-seq): 261
+  old train: 253
+  old valid: 3880
+  → new valid: 4133
+[lora_train]
+  train rows: 261
+  valid rows: 4133
+[lora_train] MLX args: {
+  train: null,
+  model: 'TinyLlama/TinyLlama-1.1B-Chat-v1.0',
+  data: 'loraland',
+  'adapter-path': 'loraland/adapter',
+  'batch-size': 1,
+  iters: 200,
+  'max-seq-length': 1024,
+  'learning-rate': 0.00005
+}
+=== GENERATION ===
+{ prompt: 'we went to Portland and this happened' }
+
+--- model output ---
+
+==========
+I got a lot of e-mails about the Tarot of the Galactic Central Underground, and the numbers in the King's reading indicates that I might be the lucky one. I know, strange, that I have a connection with the Tarot, but it seems that the Tarot was on my mind a lot lately.
+
+Yes, I have been re-reading the Tarot of the Galactic Central Underground. I started with the King, and since then, I have read all the rest of the major arcana tarot cards. I have a good understanding of the Major Arcana now, and I can see how each card fits into the Tarot of the Galactic Central Underground.
+
+I know some readers are saying that the Tarot is ancient and should be ignored, but I think it has a lot of wisdom to offer, and I want to share it with the world. Maybe I will talk to someone who can give me a deeper understanding of the Tarot.
+
+One of those readers is the Tarot itself. The Tarot has a way of opening doors to new perspectives.
+
+Just like the Tarot, I hope to have opened new doors for others, and that the Tarot will be available for a long time to come. The Tarot is a gift for humanity. We have been given it for a reason.
+
+: http://www.tarot-of-the-galactic-central-underground.com/tarot-of-the-galactic-central-underground.html
+: http://www.amazon.com/Tarot-Central-Underground-Jim-Kibble/dp/0476021836
+==========
+Prompt: 20 tokens, 195.410 tokens-per-sec
+Generation: 367 tokens, 39.844 tokens-per-sec
+Peak memory: 2.273 GB
+
+
+=== 🌟 Pipeline finished (final: md2segments, oracle_ask, reply_merge, rotate_merged, lora_train, talk_story) ===

@@ -1,0 +1,7 @@
+run: jim/expand_story_parts.coffee
+depends_on:
+  - resolve_story_parts
+needs:
+  - story_parts
+makes:
+  - expanded_story_parts

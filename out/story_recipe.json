@@ -1,0 +1,10 @@
+{
+  "story_id": "jim_0002",
+  "recipe": {
+    "scene": "espresso_machine_hissing",
+    "arrival": "roger_stirs_coffee_absentmindedly",
+    "disturbance": "talk_radio_turning_irritation_into_anger",
+    "reflection": "rumors_spread_like_sparks_in_dry_grass",
+    "realization": "most_people_defend_habits_more_than_truth"
+  }
+}
