@@ -1,13 +1,13 @@
 run:
   model: TinyLlama/TinyLlama-1.1B-Chat-v1.0
-  output_dir: out/train_markdown
-  data_dir: data/train_markdown
-  training_dir: build/train_markdown
+  output_dir: out
+  data_dir: data
+  training_dir: build/train
 
 artifacts:
-  kag_record:         { target: out/train_markdown/kag_record.json }
-  prompt_cache_spec:  { target: out/train_markdown/prompt_cache_spec.json }
-  cached_prompt_text: { target: out/train_markdown/cached_prompt_text.txt }
+  kag_record:         { target: out/kag_record.json }
+  prompt_cache_spec:  { target: out/prompt_cache_spec.json }
+  cached_prompt_text: { target: out/cached_prompt_text.txt }
 
 download_model:
   run: story/hf_download.coffee
@@ -22,7 +22,7 @@ md2segments:
   needs: []
   makes: []
   stories_md: data/jim.md
-  marshalled_stories: data/train_markdown/marshalled_stories.jsonl
+  marshalled_stories: data//marshalled_stories.jsonl
   split_mode: story
 
 oracle_ask:
@@ -30,8 +30,8 @@ oracle_ask:
   depends_on: [md2segments]
   needs: []
   makes: []
-  marshalled_stories: data/train_markdown/marshalled_stories.jsonl
-  kag_emotions: data/train_markdown/kag_emotions.jsonl
+  marshalled_stories: data//marshalled_stories.jsonl
+  kag_emotions: data//kag_emotions.jsonl
   batch_size: 4
   max_tokens: 1000
 
@@ -40,16 +40,16 @@ reply_merge:
   depends_on: [oracle_ask]
   needs: []
   makes: []
-  marshalled_stories: data/train_markdown/marshalled_stories.jsonl
-  kag_emotions: data/train_markdown/kag_emotions.jsonl
-  merged_segments: data/train_markdown/merged_segments.jsonl
+  marshalled_stories: data//marshalled_stories.jsonl
+  kag_emotions: data/kag_emotions.jsonl
+  merged_segments: data/merged_segments.jsonl
 
 extract_kag:
   run: jim/extract_kag.coffee
   depends_on: [reply_merge]
   needs: []
   makes: [kag_record]
-  kag_source_key: data/train_markdown/merged_segments.jsonl
+  kag_source_key: data/merged_segments.jsonl
   sample_index: 0
 
 rotate_merged:
@@ -57,10 +57,10 @@ rotate_merged:
   depends_on: [reply_merge]
   needs: []
   makes: []
-  merged_segments: data/train_markdown/merged_segments.jsonl
-  train_file: build/train_markdown/train.jsonl
-  valid_file: build/train_markdown/valid.jsonl
-  test_file: build/train_markdown/test.jsonl
+  merged_segments: data/merged_segments.jsonl
+  train_file: build/train/train.jsonl
+  valid_file: build/train/valid.jsonl
+  test_file: build/train/test.jsonl
 
 lora_train:
   run: train_markdown/lora_train.coffee
@@ -71,12 +71,12 @@ lora_train:
   iters: 200
   max_seq_length: 1024
   learning_rate: 0.00005
-  train_file: build/train_markdown/train.jsonl
-  valid_file: build/train_markdown/valid.jsonl
-  test_file: build/train_markdown/test.jsonl
+  train_file: build/train/train.jsonl
+  valid_file: build/train/valid.jsonl
+  test_file: build/train/test.jsonl
   adapter_path: build/adapter
   resume_adapter_file: build/adapter/adapters.safetensors
-  stdout_text: out/train_markdown/lora_train.txt
+  stdout_text: out//lora_train.txt
 
 build_prompt_cache_spec:
   run: jim/build_prompt_cache_spec.coffee
@@ -103,4 +103,4 @@ talk_story:
   max_tokens: 2000
   temperature: 0.7
   min_tokens: 500
-  output_text: out/train_markdown/talk_story.txt
+  output_text: out/talk_story.txt
