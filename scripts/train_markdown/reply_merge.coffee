@@ -14,27 +14,31 @@ loadArray = (M, key) ->
 
     segments = await loadArray M, segKey
     replies  = await loadArray M, emoKey
-    #console.error "KAG REPLIES",replies
+    existingEntry = M.theLowdown outKey
+    existingMerged = existingEntry?.value
+    existingMerged = [] if existingMerged is undefined
 
     throw new Error "#{segKey} must be an array" unless Array.isArray(segments)
     throw new Error "#{emoKey} must be an array" unless Array.isArray(replies)
+    existingMerged = [] unless Array.isArray(existingMerged)
 
     if replies.length is 0
       console.log "[reply_merge] no oracle replies yet"
       M.saveThis "done:#{stepName}", true
       return
 
+    existingKeys = new Set()
+    for row in existingMerged when row?.meta?
+      existingKeys.add "#{row.meta.doc_id}|#{row.meta.paragraph_index}"
+
     lookup = Object.create null
     for reply in replies when reply?.meta?
-      console.error "JIM a reply?", reply
       lookup["#{reply.meta.doc_id}|#{reply.meta.paragraph_index}"] = reply.emotions
-
-    #console.error "JIM lookup",lookup
-    #console.error "JIM segnebts",segments
 
     merged = []
     for segment in segments
       key = "#{segment.meta?.doc_id}|#{segment.meta?.paragraph_index}"
+      continue if existingKeys.has key
       emotions = lookup[key]
       continue unless emotions? 
       merged.push
@@ -42,7 +46,7 @@ loadArray = (M, key) ->
         prompt: segment.text ? segment.prompt
         emotions: emotions
 
-    console.log "[reply_merge] merged segments:", merged.length
+    console.log "[reply_merge] newly merged segments:", merged.length
     M.saveThis outKey, merged
     M.saveThis "done:#{stepName}", true
     return

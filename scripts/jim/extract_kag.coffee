@@ -1,49 +1,33 @@
 @step =
-  desc: "Extract structured KAG fields from the assembled Jim story context"
+  desc: "Extract structured KAG fields for prompt caching"
 
   action: (M, stepName) ->
-    readInput = (key) ->
-      entry = M.theLowdown key
-      value = entry?.value
-      if value is undefined
-        if typeof entry?.waitFor is 'function'
-          value = await entry.waitFor()
-        else if entry?.notifier?
-          value = await entry.notifier
-      throw new Error "[#{stepName}] Missing input key '#{key}'" if value is undefined
-      value
+    sourceKey = M.getStepParam(stepName, 'kag_source_key')
+    sampleIndex = M.getStepParam(stepName, 'sample_index')
+    sampleIndex = parseInt(sampleIndex, 10)
+    sampleIndex = 0 if Number.isNaN(sampleIndex)
 
-    recipe = await readInput 'story_recipe'
-    parts = await readInput 'story_parts'
-    expanded = await readInput 'expanded_story_parts'
+    sourceEntry = M.theLowdown sourceKey
+    sourceRows = sourceEntry?.value
+    if sourceRows is undefined
+      if typeof sourceEntry?.waitFor is 'function'
+        sourceRows = await sourceEntry.waitFor()
+      else if sourceEntry?.notifier?
+        sourceRows = await sourceEntry.notifier
+    throw new Error "[#{stepName}] Missing input key '#{sourceKey}'" if sourceRows is undefined
+    throw new Error "[#{stepName}] #{sourceKey} must be an array" unless Array.isArray(sourceRows)
+    throw new Error "[#{stepName}] #{sourceKey} is empty" unless sourceRows.length > 0
+
+    row = sourceRows[sampleIndex]
+    throw new Error "[#{stepName}] sample_index #{sampleIndex} is out of range" unless row?
 
     out =
-      story_id: recipe?.story_id ? parts?.story_id ? expanded?.story_id ? null
-      keys: parts?.keys ? {}
+      story_id: row?.meta?.doc_id ? null
+      source_index: sampleIndex
+      source_meta: row?.meta ? {}
       fields:
-        scene:
-          key: parts?.keys?.scene ? null
-          location: parts?.scene?.location ? null
-          source_text: parts?.scene?.text ? null
-          expanded_text: expanded?.expanded_parts?.scene?.text ? null
-        arrival:
-          key: parts?.keys?.arrival ? null
-          character: parts?.arrival?.character ? null
-          source_text: parts?.arrival?.text ? null
-          expanded_text: expanded?.expanded_parts?.arrival?.text ? null
-        disturbance:
-          key: parts?.keys?.disturbance ? null
-          theme: parts?.disturbance?.theme ? null
-          source_text: parts?.disturbance?.text ? null
-          expanded_text: expanded?.expanded_parts?.disturbance?.text ? null
-        reflection:
-          key: parts?.keys?.reflection ? null
-          source_text: parts?.reflection?.text ? null
-          expanded_text: expanded?.expanded_parts?.reflection?.text ? null
-        realization:
-          key: parts?.keys?.realization ? null
-          source_text: parts?.realization?.text ? null
-          expanded_text: expanded?.expanded_parts?.realization?.text ? null
+        source_prompt: row?.prompt ? row?.text ? null
+        emotions: row?.emotions ? {}
 
     M.saveThis "kag_record", out
     M.saveThis "done:#{stepName}", true

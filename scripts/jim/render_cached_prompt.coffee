@@ -1,5 +1,9 @@
 renderField = (label, field) ->
   return null unless field?
+  if typeof field isnt 'object' or Array.isArray(field)
+    text = String(field).trim()
+    return null unless text.length
+    return "#{label}:\n#{text}"
   lines = []
   lines.push "#{label}:"
   for own key, value of field when value?
@@ -30,7 +34,7 @@ renderField = (label, field) ->
 
     fieldSections = []
     kagFields = spec.kag_fields ? {}
-    for label in ['scene', 'arrival', 'disturbance', 'reflection', 'realization']
+    for label in Object.keys(kagFields)
       rendered = renderField label, kagFields[label]
       fieldSections.push rendered if rendered?
 

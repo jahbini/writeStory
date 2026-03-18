@@ -10,9 +10,6 @@ artifacts:
   story_recipe:         { target: out/story_recipe.json }
   story_parts:          { target: out/story_parts.json }
   expanded_story_parts: { target: out/expanded_story_parts.json }
-  kag_record:           { target: out/kag_record.json }
-  prompt_cache_spec:    { target: out/prompt_cache_spec.json }
-  cached_prompt_text:   { target: out/cached_prompt_text.txt }
   story:                { target: out/story.json }
   story_polished:       { target: out/story_polished.json }
 
@@ -54,31 +51,12 @@ assemble_story:
   needs: [expanded_story_parts]
   makes: [story]
 
-extract_kag:
-  run: jim/extract_kag.coffee
-  depends_on: [expand_story_parts]
-  needs: [story_recipe, story_parts, expanded_story_parts]
-  makes: [kag_record]
-
-build_prompt_cache_spec:
-  run: jim/build_prompt_cache_spec.coffee
-  depends_on: [assemble_story, extract_kag]
-  needs: [story, kag_record]
-  makes: [prompt_cache_spec]
-
-render_cached_prompt:
-  run: jim/render_cached_prompt.coffee
-  depends_on: [build_prompt_cache_spec]
-  needs: [prompt_cache_spec]
-  makes: [cached_prompt_text]
-
 polish_story:
   run: jim/polish_story.coffee
-  depends_on: [render_cached_prompt]
-  needs: [story, cached_prompt_text]
+  depends_on: [assemble_story]
+  needs: [story]
   makes: [story_polished]
   story_key: story
-  prompt_key: cached_prompt_text
   adapter_path: build/adapter
   temperature: 0.7
   max_tokens: 2000

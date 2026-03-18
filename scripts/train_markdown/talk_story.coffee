@@ -57,6 +57,7 @@ cleanGeneratedText = (prompt, rawOutput) ->
       "max-tokens": String(maxTokens)
       temp: String(temperature)
       "min-tokens": String(minTokens)
+      , true
 
     output = cleanGeneratedText prompt, rawOutput
 
