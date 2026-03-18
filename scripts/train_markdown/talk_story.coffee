@@ -6,7 +6,7 @@ Expand the following story fragment into a short reflective narrative of at leas
 Maintain the same events and ideas, but improve flow, imagery, and voice.
 
 Rules:
-- Speak in the first person as Jim
+- You are Jim and you write in the first personn
 - Keep the same order of events.
 - Do not introduce new plot elements.
 - Add natural narration and sensory detail.
