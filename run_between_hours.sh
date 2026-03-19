@@ -6,9 +6,9 @@
 # Example:
 #   ./run_between_hours.sh 22 04 /somepath
 #
-source ~/.bashrc
-ROOT=/Users/theaiguy/writeStory
-EXEC=/Users/theaiguy/writeStory      # wherever your scripts live
+source ~/.bash_profile
+ROOT=/Users/jahbini/writeStory
+EXEC=/Users/jahbini/writeStory      # wherever your scripts live
 
 START_HOUR="$1"
 END_HOUR="$2"

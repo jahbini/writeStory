@@ -17,11 +17,12 @@ extractJSON = (raw) ->
     emoKey  = M.getStepParam stepName, 'kag_emotions'
     batchSz = M.getStepParam stepName, 'batch_size'
     maxTok  = M.getStepParam stepName, 'max_tokens'
+    viewed  = M.getStepParam stepName,  'kag_viewed'
 
     modelDir = M.theLowdown('modelDir')?.value
     segments = await loadArray M, segKey
     taggedRows = await loadArray M, emoKey
-    #console.error "JIM oracle_ask inputs",segments.length,taggedRows.length,emoKey
+    console.error "JIM oracle_ask inputs",segments.length,taggedRows.length,emoKey
 
     throw new Error "#{segKey} must be an array" unless Array.isArray(segments)
     taggedRows = [] unless Array.isArray(taggedRows)
@@ -38,6 +39,7 @@ extractJSON = (raw) ->
       break if pending.length >= batchSz
 
     console.log "[oracle_ask] pending:", pending.length
+    M.saveThis viewed, pending
 
     if pending.length is 0
       console.error "JIM BAD EXIT"
@@ -79,7 +81,7 @@ Return exactly:
 
       console.log "[oracle_ask] tagged #{meta.doc_id} #{meta.paragraph_index}"
 
-    #console.error "JIM emotion tags",emoKey,outRows
+    console.error "JIM emotion tags",emoKey,outRows.length
     M.saveThis emoKey, outRows
     M.saveThis "done:#{stepName}", true
     return

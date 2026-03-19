@@ -23,53 +23,39 @@ isSequential = (a, b) ->
   desc: "Rotate merged markdown segments into LoRA train and valid sets"
 
   action: (M, stepName) ->
-    mergedKey = M.getStepParam stepName, 'merged_segments'
+    viewedKey = M.getStepParam stepName, 'viewed_segments'
     trainKey  = M.getStepParam stepName, 'train_file'
     validKey  = M.getStepParam stepName, 'valid_file'
+    testKey  = M.getStepParam stepName,  'test_file'
 
-    mergedEntry = M.theLowdown mergedKey
-    mergedRows = mergedEntry?.value
-    mergedRows = await mergedEntry.notifier if mergedRows is undefined
+    viewedEntry = M.theLowdown viewedKey
+    viewedRows = viewedEntry?.value
+    viewedRows = await viewedEntry.notifier if viewedRows is undefined
 
-    trainEntry = M.theLowdown trainKey
-    oldTrain = trainEntry?.value
-    oldTrain = [] if oldTrain is undefined
+    trainEntry = M.theLowdown trainKey.value
+    validEntry = M.theLowdown validKey.value
 
-    validEntry = M.theLowdown validKey
-    oldValid = validEntry?.value
-    oldValid = [] if oldValid is undefined
-
-    throw new Error "#{mergedKey} must be an array" unless Array.isArray(mergedRows)
-    oldTrain = [] unless Array.isArray(oldTrain)
-    oldValid = [] unless Array.isArray(oldValid)
+    throw new Error "#{viewedKey} must be an array" unless Array.isArray(viewedRows)
 
     newTrain = []
     skipped = 0
 
-    for index in [0...mergedRows.length - 1]
-      current = mergedRows[index]
-      nextRow = mergedRows[index + 1]
+    for index in [0...viewedRows.length - 1]
+      current = viewedRows[index]
+      nextRow = viewedRows[index + 1]
       unless isSequential(current, nextRow)
         skipped += 1
         continue
-      continue unless current?.prompt?
+      console.error "current",current
+      continue unless current?.text?
       newTrain.push
-        text: "#{mkPrompt(current)}\n\n#{nextRow.prompt}"
+        text: "#{mkPrompt(current)}\n\n#{nextRow.text}"
+      console.error "training key",newTrain
 
-    oldTrain = (toTextExample(row) for row in oldTrain).filter(Boolean)
-    oldValid = (toTextExample(row) for row in oldValid).filter(Boolean)
-    newValid = oldValid.concat oldTrain
-    newValid = newTrain if newValid.length is 0
 
-    console.log "[rotate_merged]"
-    console.log "  merged rows:", mergedRows.length
-    console.log "  new train pairs:", newTrain.length
-    console.log "  skipped (non-seq):", skipped
-    console.log "  old train:", oldTrain.length
-    console.log "  old valid:", oldValid.length
-    console.log "  -> new valid:", newValid.length
 
     M.saveThis trainKey, newTrain
-    M.saveThis validKey, newValid
+    M.saveThis validKey, newTrain
+    M.saveThis testKey, newTrain
     M.saveThis "done:#{stepName}", true
     return
