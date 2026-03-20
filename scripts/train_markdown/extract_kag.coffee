@@ -10,10 +10,8 @@
     sourceEntry = M.theLowdown sourceKey
     sourceRows = sourceEntry?.value
     if sourceRows is undefined
-      if typeof sourceEntry?.waitFor is 'function'
-        sourceRows = await sourceEntry.waitFor()
-      else if sourceEntry?.notifier?
-        sourceRows = await sourceEntry.notifier
+      console.error "JIM awaits", sourceKey
+      sourceRows = await sourceEntry.notifier
     throw new Error "[#{stepName}] Missing input key '#{sourceKey}'" if sourceRows is undefined
     throw new Error "[#{stepName}] #{sourceKey} must be an array" unless Array.isArray(sourceRows)
     throw new Error "[#{stepName}] #{sourceKey} is empty" unless sourceRows.length > 0

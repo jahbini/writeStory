@@ -15,6 +15,7 @@ extractJSON = (raw) ->
   action: (M, stepName) ->
     segKey  = M.getStepParam stepName, 'marshalled_stories'
     emoKey  = M.getStepParam stepName, 'kag_emotions'
+    newKey  = M.getStepParam stepName, 'new_story_ids'
     batchSz = M.getStepParam stepName, 'batch_size'
     maxTok  = M.getStepParam stepName, 'max_tokens'
     viewed  = M.getStepParam stepName,  'kag_viewed'
@@ -41,8 +42,16 @@ extractJSON = (raw) ->
     console.log "[oracle_ask] pending:", pending.length
     M.saveThis viewed, pending
 
+    newStoryIdSet = new Set()
+    for segment in pending
+      title = segment?.meta?.title
+      continue unless title?
+      newStoryIdSet.add title
+    newStoryIds = Array.from newStoryIdSet
+
     if pending.length is 0
       console.error "JIM BAD EXIT"
+      M.saveThis newKey, newStoryIds
       M.saveThis emoKey, taggedRows
       M.saveThis "done:#{stepName}", true
       return
@@ -82,6 +91,7 @@ Return exactly:
       console.log "[oracle_ask] tagged #{meta.doc_id} #{meta.paragraph_index}"
 
     console.error "JIM emotion tags",emoKey,outRows.length
+    M.saveThis newKey, newStoryIds
     M.saveThis emoKey, outRows
     M.saveThis "done:#{stepName}", true
     return

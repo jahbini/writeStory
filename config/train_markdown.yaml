@@ -3,6 +3,7 @@ run:
   output_dir: out
   data_dir: data
   training_dir: build/train
+  loraLand: build/model
 
 artifacts:
   kag_record:         { target: out/kag_record.json }
@@ -31,41 +32,45 @@ oracle_ask:
   needs: []
   makes: []
   marshalled_stories: data//marshalled_stories.jsonl
-  kag_emotions: data//kag_emotions.jsonl
+  new_story_ids: out/new_story_ids.json
+  kag_emotions: out//kag_emotions.jsonl
   kag_viewed: out/viewed.jsonl
   batch_size: 4
   max_tokens: 1000
 
-reply_merge:
-  run: train_markdown/reply_merge.coffee
+prepare_training_data:
+  run: train_markdown/prepare_training_data.coffee
   depends_on: [oracle_ask]
   needs: []
   makes: []
-  marshalled_stories: data//marshalled_stories.jsonl
-  kag_emotions: data/kag_emotions.jsonl
-  merged_segments: data/merged_segments.jsonl
-
-extract_kag:
-  run: jim/extract_kag.coffee
-  depends_on: [reply_merge]
-  needs: []
-  makes: [kag_record]
-  kag_source_key: data/merged_segments.jsonl
-  sample_index: 0
-
-rotate_merged:
-  run: train_markdown/rotate_merged.coffee
-  depends_on: [oracle_ask]
-  needs: []
-  makes: []
-  viewed_segments: out/viewed.jsonl
+  marshalled_stories: data/marshalled_stories.jsonl
+  new_story_ids: out/new_story_ids.json
   train_file: build/train/train.jsonl
   valid_file: build/train/valid.jsonl
   test_file: build/train/test.jsonl
 
+
+extract_kag:
+  run: train_markdown/extract_kag.coffee
+  depends_on: [prepare_kag_segments]
+  needs: []
+  makes: [kag_record]
+  kag_source_key: out/kag_segments.jsonl
+  sample_index: 0
+
+
+prepare_kag_segments:
+  run: train_markdown/prepare_kag_segments.coffee
+  depends_on: [oracle_ask]
+  needs: []
+  makes: []
+  marshalled_stories: data//marshalled_stories.jsonl
+  kag_emotions: out//kag_emotions.jsonl
+  kag_segments: out/kag_segments.jsonl
+
 lora_train:
   run: train_markdown/lora_train.coffee
-  depends_on: [rotate_merged]
+  depends_on: [prepare_training_data]
   needs: []
   makes: []
   batch_size: 1
@@ -80,20 +85,20 @@ lora_train:
   stdout_text: out//lora_train.txt
 
 build_prompt_cache_spec:
-  run: jim/build_prompt_cache_spec.coffee
+  run: train_markdown/build_prompt_cache_spec.coffee
   depends_on: [lora_train, extract_kag]
   needs: [kag_record]
   makes: [prompt_cache_spec]
   story_fragment: we went to Portland and this happened
 
 render_cached_prompt:
-  run: jim/render_cached_prompt.coffee
+  run: train_markdown/render_cached_prompt.coffee
   depends_on: [build_prompt_cache_spec]
   needs: [prompt_cache_spec]
   makes: [cached_prompt_text]
 
 talk_story:
-  run: jim/polish_story.coffee
+  run: train_markdown/polish_story.coffee
   depends_on: [render_cached_prompt]
   needs: [cached_prompt_text]
   makes: []

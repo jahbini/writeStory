@@ -35,20 +35,11 @@ resolveResumeFile = (adapterPath, configuredResumeFile) ->
     adapterPath  = M.getStepParam stepName, 'adapter_path'
     resumeFile   = M.getStepParam stepName, 'resume_adapter_file'
     stdoutKey    = M.getStepParam stepName, 'stdout_text'
+    modelDir     = M.getStepParam stepName, "loraLand"
 
-    trainData = await loadArray M, trainKey
-    validData = await loadArray M, validKey
-    modelDir = M.theLowdown('modelDir')?.value
-
-    throw new Error "#{trainKey} must be an array" unless Array.isArray(trainData)
-    throw new Error "#{validKey} must be an array" unless Array.isArray(validData)
+    console.error "JIM lora"
 
     console.log "[lora_train]"
-    console.log "  train rows:", trainData.length
-    console.log "  valid rows:", validData.length
-
-    if trainData.length is 0
-      throw new Error "[lora_train] train_file is empty"
 
     actualResumeFile = resolveResumeFile adapterPath, resumeFile
 
