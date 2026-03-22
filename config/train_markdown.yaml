@@ -38,7 +38,7 @@ oracle_ask:
   prompt_prefix: |
     You are a classifier. Given this sample <<< 
   prompt_suffix: |
-     >>> classify each emotion as:
+    >>> classify each emotion as:
     "none", "mild", "moderate", "strong", or "extreme".
 
     Return exactly:
