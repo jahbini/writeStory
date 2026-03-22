@@ -41,11 +41,11 @@ isSequential = (a, b) ->
       unless isSequential(current, nextRow)
         skipped += 1
         continue
-      console.error "current",current
+      #console.error "JIM current",current
       continue unless current?.text?
       newTrain.push
         text: "#{trainPromptPrefix}\n#{current.text}\n\n#{nextRow.text}"
-      console.error "training key",newTrain
+      #console.error "JIM training key",newTrain
 
 
 

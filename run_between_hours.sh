@@ -7,8 +7,8 @@
 #   ./run_between_hours.sh 22 04 /somepath
 #
 source ~/.bash_profile
-ROOT=/Users/jahbini/writeStory
-EXEC=/Users/jahbini/writeStory      # wherever your scripts live
+ROOT=~/writeStory
+EXEC=~/writeStory      # wherever your scripts live
 
 START_HOUR="$1"
 END_HOUR="$2"
