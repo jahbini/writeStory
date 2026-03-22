@@ -10,7 +10,7 @@
     sourceEntry = M.theLowdown sourceKey
     sourceRows = sourceEntry?.value
     if sourceRows is undefined
-      console.error "JIM awaits", sourceKey
+      #console.error "JIM awaits", sourceKey
       sourceRows = await sourceEntry.notifier
     throw new Error "[#{stepName}] Missing input key '#{sourceKey}'" if sourceRows is undefined
     throw new Error "[#{stepName}] #{sourceKey} must be an array" unless Array.isArray(sourceRows)

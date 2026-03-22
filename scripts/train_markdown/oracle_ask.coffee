@@ -25,7 +25,6 @@ extractJSON = (raw) ->
     modelDir = M.theLowdown('modelDir')?.value
     segments = await loadArray M, segKey
     taggedRows = await loadArray M, emoKey
-    console.error "JIM oracle_ask inputs",segments.length,taggedRows.length,emoKey
 
     throw new Error "#{segKey} must be an array" unless Array.isArray(segments)
     taggedRows = [] unless Array.isArray(taggedRows)
@@ -85,7 +84,6 @@ extractJSON = (raw) ->
 
       console.log "[oracle_ask] tagged #{meta.doc_id} #{meta.paragraph_index}"
 
-    console.error "JIM emotion tags",emoKey,outRows.length
     M.saveThis newKey, newStoryIds
     M.saveThis emoKey, outRows
     M.saveThis "done:#{stepName}", true

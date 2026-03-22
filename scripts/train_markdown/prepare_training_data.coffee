@@ -8,8 +8,6 @@
     validFile = M.getStepParam stepName, 'valid_file'
     testFile = M.getStepParam stepName, 'test_file'
 
-    console.error "JIM", storiesKey, newIdsKey, trainFile
-
     storiesEntry = M.theLowdown storiesKey
     stories = storiesEntry?.value
     stories = await storiesEntry.notifier if stories is undefined
@@ -21,7 +19,7 @@
     throw new Error "[#{stepName}] #{storiesKey} must be an array" unless Array.isArray(stories)
     throw new Error "[#{stepName}] #{newIdsKey} must be an array" unless Array.isArray(newStoryIds)
 
-    console.error "JIM", newStoryIds
+    console.error "JIM newstory IDs", newStoryIds
     if newStoryIds.length is 0
       console.log "[prepare_training_data] stories processed: 0"
       console.log "[prepare_training_data] rows written: 0"

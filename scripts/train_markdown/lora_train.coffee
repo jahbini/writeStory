@@ -37,8 +37,6 @@ resolveResumeFile = (adapterPath, configuredResumeFile) ->
     stdoutKey    = M.getStepParam stepName, 'stdout_text'
     modelDir     = M.getStepParam stepName, "loraLand"
 
-    console.error "JIM lora"
-
     console.log "[lora_train]"
 
     actualResumeFile = resolveResumeFile adapterPath, resumeFile
@@ -60,7 +58,7 @@ resolveResumeFile = (adapterPath, configuredResumeFile) ->
     else
       console.log "[lora_train] no prior adapter found, starting fresh"
 
-    stdout = M.callMLX 'lora', args, true
+    stdout = M.callMLX 'lora', args
 
     M.saveThis stdoutKey, stdout
     M.saveThis "done:#{stepName}", true
