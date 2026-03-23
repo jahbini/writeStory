@@ -1,3 +1,19 @@
+pre_prompt = """You are writing in the narrative voice of Jim from St. John's.
+
+Expand the following story fragment into a complete reflective narrative.
+
+Maintain the same events and ideas, but improve flow, imagery, and voice.
+
+Rules:
+- Speak in the first person as Jim
+- Keep the same order of events
+- Do not introduce new plot elements
+- Add natural narration and sensory detail
+- The tone should be observational, slightly humorous, and reflective
+- Return only the finished story
+
+Story fragment:
+"""
 @step =
   desc: "Build MLX training data from newly identified full stories"
 
@@ -68,8 +84,16 @@
 
       continue unless fullStoryText.length > 0
 
+      paragraphs = fullStoryText.split /\n\s*\n/
+      fragment = ''
+      if paragraphs.length > 0
+        fragment = paragraphs[0]
+      if fragment.length < 300 and paragraphs.length > 1
+        fragment += "\n\n" + paragraphs[1]
+
+      continue unless fragment.length > 0
       row =
-        text: fullStoryText
+        text: pre_prompt + "\n" + fragment + "\n\nFinished story:\n" + fullStoryText
 
       rows.push row
       storiesProcessed += 1
