@@ -1,5 +1,5 @@
 run:
-  model: TinyLlama/TinyLlama-1.1B-Chat-v1.0
+  model: Qwen/Qwen3-4B-Instruct-2507
   loraLand: build/model
   output_dir: out
   data_dir: data

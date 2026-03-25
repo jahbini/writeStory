@@ -1,4 +1,5 @@
 pipeline: train_lora
+model: Qwen/Qwen3-4B-Instruct-2507
 
 lora_train:
   max_seq_length: 2048
