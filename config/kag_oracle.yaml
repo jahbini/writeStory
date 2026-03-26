@@ -21,15 +21,26 @@ md2segments:
   marshalled_stories: data/marshalled_stories.jsonl
   split_mode: paragraph
 
+quantize_model:
+  run: kag_oracle/quantize_model.coffee
+  depends_on: [download_model]
+  needs: []
+  makes: []
+  source_model_dir: build/model
+  quantized_model_dir: build/model4
+  quantized_model_memo_key: quantizedModelDir
+
 oracle_ask:
-  run: train_markdown/oracle_ask.coffee
-  depends_on: [md2segments]
+  run: kag_oracle/oracle_ask.coffee
+  depends_on: [md2segments, quantize_model]
   needs: []
   makes: []
   marshalled_stories: data/marshalled_stories.jsonl
   new_story_ids: out/new_story_ids.json
   kag_emotions: out/kag_emotions.jsonl
   kag_viewed: out/viewed.jsonl
+  model_dir: build/model4
+  quantized_model_memo_key: quantizedModelDir
   prompt_prefix: |
     You are an emotion extraction system.
     Output valid JSON only.
@@ -59,7 +70,7 @@ oracle_ask:
   max_tokens: 80
 
 prepare_kag_segments:
-  run: train_markdown/prepare_kag_segments.coffee
+  run: kag_oracle/prepare_kag_segments.coffee
   depends_on: [oracle_ask]
   needs: []
   makes: []

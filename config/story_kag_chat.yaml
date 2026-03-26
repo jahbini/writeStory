@@ -18,7 +18,7 @@ download_model:
   loraLand: build/model
 
 extract_kag:
-  run: train_markdown/extract_kag.coffee
+  run: kag_oracle/extract_kag.coffee
   depends_on: [never]
   needs: []
   makes: [kag_record]

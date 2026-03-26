@@ -70,8 +70,6 @@ sanitizeStop = (text) ->
     throw new Error "[#{stepName}] #{storiesKey} must be an array" unless Array.isArray stories
     throw new Error "[#{stepName}] #{newIdsKey} must be an array" unless Array.isArray newStoryIds
 
-    console.error "JIM newstory IDs", newStoryIds
-
     if newStoryIds.length is 0
       console.log "[prepare_training_data] stories processed: 0"
       console.log "[prepare_training_data] rows written: 0"

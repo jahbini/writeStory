@@ -61,6 +61,7 @@ safe = (title) ->
       throw new Error "Unsupported split_mode: #{mode}"
 
     lines = raw.split /\r?\n/
+    
     stories = []
     currentTitle = null
     buffer = []
@@ -75,11 +76,12 @@ safe = (title) ->
       if line.startsWith '# '
         flushStory()
         currentTitle = line.slice(2).trim()
+        
       else
         buffer.push line
 
     flushStory()
-
+    
     rows = []
     if mode is 'story'
       for story in stories

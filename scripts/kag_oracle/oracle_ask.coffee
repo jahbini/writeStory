@@ -21,8 +21,9 @@ extractJSON = (raw) ->
     batchSz = M.getStepParam stepName, 'batch_size'
     maxTok  = M.getStepParam stepName, 'max_tokens'
     viewed  = M.getStepParam stepName,  'kag_viewed'
-
-    modelDir = M.theLowdown('modelDir')?.value
+    quantizedModelMemoKey = M.getStepParam stepName, 'quantized_model_memo_key', 'quantizedModelDir'
+    modelDir = M.theLowdown(quantizedModelMemoKey)?.value ? M.getStepParam(stepName, 'model_dir') ? M.theLowdown('modelDir')?.value
+    throw new Error "[oracle_ask] Missing model_dir/quantized model path" unless modelDir?
     segments = await loadArray M, segKey
     taggedRows = await loadArray M, emoKey
 
@@ -75,18 +76,19 @@ extractJSON = (raw) ->
          model: modelDir
          prompt: prompt
          "max-tokens": String(maxTok)
+         "max-kv-size": 1024
          temp: String M.getStepParam stepName, "temperature"
          "top-p": String M.getStepParam stepName, 'top_p'
          "top-k": String M.getStepParam stepName, 'top_k'
         , true
-      
+
       outRows.push
         meta:
           doc_id: meta.doc_id
           paragraph_index: meta.paragraph_index
         emotions: extractJSON(raw)
 
-      console.log "JIM Emotions from",meta.doc_id, raw
+      console.log "JIM Emotions from", meta.doc_id, raw
       console.log "[oracle_ask] tagged #{meta.doc_id} #{meta.paragraph_index}"
 
     M.saveThis newKey, newStoryIds
