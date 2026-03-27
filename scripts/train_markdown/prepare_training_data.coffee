@@ -52,31 +52,20 @@ sanitizeStop = (text) ->
 @step =
   desc: "Build MLX training data from newly identified full stories"
 
-  action: (M, stepName) ->
-    storiesKey = M.getStepParam stepName, 'marshalled_stories'
-    newIdsKey = M.getStepParam stepName, 'new_story_ids'
-    trainFile = M.getStepParam stepName, 'train_file'
-    validFile = M.getStepParam stepName, 'valid_file'
-    testFile = M.getStepParam stepName, 'test_file'
+  action: (S) ->
+    stories = await S.need 'marshalled_stories'
+    newStoryIds = await S.need 'new_story_ids'
 
-    storiesEntry = M.theLowdown storiesKey
-    stories = storiesEntry?.value
-    stories = await storiesEntry.notifier if stories is undefined
-
-    newIdsEntry = M.theLowdown newIdsKey
-    newStoryIds = newIdsEntry?.value
-    throw new Error "[#{stepName}] Missing input key '#{newIdsKey}'. Run kag_oracle first or provide #{newIdsKey} on disk before train_lora." if newStoryIds is undefined
-
-    throw new Error "[#{stepName}] #{storiesKey} must be an array" unless Array.isArray stories
-    throw new Error "[#{stepName}] #{newIdsKey} must be an array" unless Array.isArray newStoryIds
+    throw new Error "[#{S.stepName}] marshalled_stories must be an array" unless Array.isArray stories
+    throw new Error "[#{S.stepName}] new_story_ids must be an array" unless Array.isArray newStoryIds
 
     if newStoryIds.length is 0
       console.log "[prepare_training_data] stories processed: 0"
       console.log "[prepare_training_data] rows written: 0"
-      M.saveThis trainFile, []
-      M.saveThis validFile, []
-      M.saveThis testFile, []
-      M.saveThis "done:#{stepName}", true
+      S.make 'train_rows', []
+      S.make 'valid_rows', []
+      S.make 'test_rows', []
+      S.done()
       return
 
     wantedTitles = new Set()
@@ -160,7 +149,7 @@ sanitizeStop = (text) ->
 
       maxCompletionTokens = MAX_TOTAL_TOKENS - promptTokens - SAFETY_TOKENS - STOP_TOKENS
       if maxCompletionTokens < 80
-        throw new Error "[#{stepName}] prompt too large for token budget on title #{title}"
+        throw new Error "[#{S.stepName}] prompt too large for token budget on title #{title}"
 
       chunkParagraphs = []
       chunkTokens = 0
@@ -235,8 +224,8 @@ sanitizeStop = (text) ->
     console.log "[prepare_training_data] stories processed:", storiesProcessed
     console.log "[prepare_training_data] rows written:", rowsWritten
 
-    M.saveThis trainFile, rows
-    M.saveThis validFile, rows
-    M.saveThis testFile, rows
-    M.saveThis "done:#{stepName}", true
+    S.make 'train_rows', rows
+    S.make 'valid_rows', rows
+    S.make 'test_rows', rows
+    S.done()
     return

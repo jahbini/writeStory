@@ -1,20 +1,12 @@
 @step =
   desc: "Record the completed LoRA training batch"
 
-  action: (M, stepName) ->
-    newIdsKey = M.getStepParam stepName, 'new_story_ids'
-    trainedKey = M.getStepParam stepName, 'trained_story_ids'
+  action: (S) ->
+    newStoryIds = await S.need 'new_story_ids'
+    trainedStoryIds = await S.peek 'trained_story_ids', []
 
-    newIdsEntry = M.theLowdown newIdsKey
-    newStoryIds = newIdsEntry?.value
-    newStoryIds = await newIdsEntry.notifier if newStoryIds is undefined
-
-    trainedEntry = M.theLowdown trainedKey
-    trainedStoryIds = trainedEntry?.value
-    trainedStoryIds = [] if trainedStoryIds is undefined
-
-    throw new Error "[#{stepName}] #{newIdsKey} must be an array" unless Array.isArray newStoryIds
-    throw new Error "[#{stepName}] #{trainedKey} must be an array" unless Array.isArray trainedStoryIds
+    throw new Error "[#{S.stepName}] new_story_ids must be an array" unless Array.isArray newStoryIds
+    throw new Error "[#{S.stepName}] trained_story_ids must be an array" unless Array.isArray trainedStoryIds
 
     merged = []
     seen = new Set()
@@ -38,6 +30,6 @@
     for title, idx in newStoryIds
       console.log "[record_trained_batch] trained[#{idx}] #{title}" if title?
 
-    M.saveThis trainedKey, merged
-    M.saveThis "done:#{stepName}", true
+    S.make 'trained_story_ids', merged
+    S.done()
     return

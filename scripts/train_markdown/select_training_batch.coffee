@@ -1,22 +1,17 @@
 @step =
   desc: "Select the next batch of story titles for LoRA training"
 
-  action: (M, stepName) ->
-    storiesKey = M.getStepParam stepName, 'marshalled_stories'
-    newIdsKey = M.getStepParam stepName, 'new_story_ids'
-    trainedKey = M.getStepParam stepName, 'trained_story_ids'
-    batchSize = M.getStepParam stepName, 'batch_size'
+  action: (S) ->
+    batchSize = S.param 'batch_size'
+    trainedKey = S.param 'trained_story_ids_path'
+    stories = await S.need 'marshalled_stories'
 
-    storiesEntry = M.theLowdown storiesKey
-    stories = storiesEntry?.value
-    stories = await storiesEntry.notifier if stories is undefined
-
-    trainedEntry = M.theLowdown trainedKey
+    trainedEntry = S.theLowdown trainedKey
     trainedStoryIds = trainedEntry?.value
     trainedStoryIds = [] if trainedStoryIds is undefined
 
-    throw new Error "[#{stepName}] #{storiesKey} must be an array" unless Array.isArray stories
-    throw new Error "[#{stepName}] #{trainedKey} must be an array" unless Array.isArray trainedStoryIds
+    throw new Error "[#{S.stepName}] marshalled_stories must be an array" unless Array.isArray stories
+    throw new Error "[#{S.stepName}] #{trainedKey} must be an array" unless Array.isArray trainedStoryIds
 
     trainedSet = new Set()
     for title in trainedStoryIds
@@ -53,6 +48,6 @@
     for title, idx in batchTitles
       console.log "[select_training_batch] batch[#{idx}] #{title}"
 
-    M.saveThis newIdsKey, batchTitles
-    M.saveThis "done:#{stepName}", true
+    S.make 'new_story_ids', batchTitles
+    S.done()
     return

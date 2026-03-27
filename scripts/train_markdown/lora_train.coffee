@@ -1,12 +1,6 @@
 fs = require 'fs'
 path = require 'path'
 
-loadArray = (M, key) ->
-  entry = M.theLowdown key
-  value = entry?.value
-  value = await entry.notifier if value is undefined
-  value
-
 resolveResumeFile = (adapterPath, configuredResumeFile) ->
   return configuredResumeFile if configuredResumeFile? and fs.existsSync(configuredResumeFile)
 
@@ -22,44 +16,66 @@ resolveResumeFile = (adapterPath, configuredResumeFile) ->
   return null unless checkpoints.length
   path.join adapterPath, checkpoints[checkpoints.length - 1]
 
+hasAdapterConfig = (adapterPath) ->
+  return false unless adapterPath?
+  fs.existsSync path.join(adapterPath, 'adapter_config.json')
+
 @step =
   desc: "Run MLX LoRA training for markdown-derived train and valid sets"
 
-  action: (M, stepName) ->
-    batchSize    = M.getStepParam stepName, 'batch_size'
-    iters        = M.getStepParam stepName, 'iters'
-    maxSeqLength = M.getStepParam stepName, 'max_seq_length'
-    learningRate = M.getStepParam stepName, 'learning_rate'
-    trainKey     = M.getStepParam stepName, 'train_file'
-    validKey     = M.getStepParam stepName, 'valid_file'
-    adapterPath  = M.getStepParam stepName, 'adapter_path'
-    resumeFile   = M.getStepParam stepName, 'resume_adapter_file'
-    stdoutKey    = M.getStepParam stepName, 'stdout_text'
-    modelDir     = M.getStepParam stepName, "loraLand"
+  action: (S) ->
+    batchSize    = S.param 'batch_size'
+    iters        = S.param 'iters'
+    maxSeqLength = S.param 'max_seq_length'
+    learningRate = S.param 'learning_rate'
+    testOnly     = S.param 'test_only', false
+    adapterPath  = S.param 'adapter_path'
+    resumeFile   = S.param 'resume_adapter_file'
+    modelDir     = S.param 'loraLand'
+    trainingDir  = S.param 'training_dir'
+
+    await S.need 'train_rows'
+    await S.need 'valid_rows'
+    await S.need 'test_rows'
 
     console.log "[lora_train]"
 
     actualResumeFile = resolveResumeFile adapterPath, resumeFile
+    adapterConfigExists = hasAdapterConfig adapterPath
 
     args =
-      train: null
       model: modelDir
-      data: trainKey.replace(/\/train.jsonl$/, '')
-      "adapter-path": adapterPath
+      data: trainingDir
       "batch-size": String(batchSize)
       iters: String(iters)
       "max-seq-length": String(maxSeqLength)
       "learning-rate": String(learningRate)
 
-    args["resume-adapter-file"] = actualResumeFile if actualResumeFile?
-
-    if actualResumeFile?
-      console.log "[lora_train] resuming from:", actualResumeFile
+    if testOnly
+      args.test = null
+      console.log "[lora_train] mode: test"
     else
+      args.train = null
+      console.log "[lora_train] mode: train"
+
+    if testOnly
+      if adapterConfigExists
+        args["adapter-path"] = adapterPath
+        console.log "[lora_train] test mode using existing adapter path:", adapterPath
+      else
+        console.log "[lora_train] test mode without adapter path; no adapter_config.json at:", adapterPath
+    else
+      args["adapter-path"] = adapterPath
+
+    args["resume-adapter-file"] = actualResumeFile if actualResumeFile? and not testOnly
+
+    if actualResumeFile? and not testOnly
+      console.log "[lora_train] resuming from:", actualResumeFile
+    else if not testOnly
       console.log "[lora_train] no prior adapter found, starting fresh"
 
-    stdout = M.callMLX 'lora', args
+    stdout = S.callMLX 'lora', args
 
-    M.saveThis stdoutKey, stdout
-    M.saveThis "done:#{stepName}", true
+    S.make 'lora_stdout', stdout
+    S.done()
     return

@@ -1,9 +1,3 @@
-loadArray = (M, key) ->
-  entry = M.theLowdown key
-  value = entry?.value
-  value = [] if value is undefined
-  value
-
 extractJSON = (raw) ->
   return {} unless raw?
   block = raw.match(/\{[\s\S]*\}/)?[0]
@@ -12,22 +6,18 @@ extractJSON = (raw) ->
 @step =
   desc: "Classify a batch of untagged markdown segments with the emotion oracle"
 
-  action: (M, stepName) ->
-    segKey  = M.getStepParam stepName, 'marshalled_stories'
-    emoKey  = M.getStepParam stepName, 'kag_emotions'
-    newKey  = M.getStepParam stepName, 'new_story_ids'
-    promptPrefix = M.getStepParam stepName, 'prompt_prefix'
-    promptSuffix = M.getStepParam stepName, 'prompt_suffix'
-    batchSz = M.getStepParam stepName, 'batch_size'
-    maxTok  = M.getStepParam stepName, 'max_tokens'
-    viewed  = M.getStepParam stepName,  'kag_viewed'
-    quantizedModelMemoKey = M.getStepParam stepName, 'quantized_model_memo_key', 'quantizedModelDir'
-    modelDir = M.theLowdown(quantizedModelMemoKey)?.value ? M.getStepParam(stepName, 'model_dir') ? M.theLowdown('modelDir')?.value
+  action: (S) ->
+    promptPrefix = S.param 'prompt_prefix'
+    promptSuffix = S.param 'prompt_suffix'
+    batchSz = S.param 'batch_size'
+    maxTok = S.param 'max_tokens'
+    quantizedModelMemoKey = S.param 'quantized_model_memo_key', 'quantizedModelDir'
+    modelDir = S.theLowdown(quantizedModelMemoKey)?.value ? S.param('model_dir') ? S.theLowdown('modelDir')?.value
     throw new Error "[oracle_ask] Missing model_dir/quantized model path" unless modelDir?
-    segments = await loadArray M, segKey
-    taggedRows = await loadArray M, emoKey
+    segments = await S.need 'marshalled_stories'
+    taggedRows = await S.peek 'kag_emotions', []
 
-    throw new Error "#{segKey} must be an array" unless Array.isArray(segments)
+    throw new Error "[#{S.stepName}] marshalled_stories must be an array" unless Array.isArray(segments)
     taggedRows = [] unless Array.isArray(taggedRows)
 
     tagged = new Set()
@@ -49,7 +39,7 @@ extractJSON = (raw) ->
 
     console.log "[oracle_ask] pending:", pending.length
     console.log "[oracle_ask] stories left after this batch:", Math.max(remaining - pending.length, 0)
-    M.saveThis viewed, pending
+    S.make 'kag_viewed', pending
 
     newStoryIdSet = new Set()
     for segment in pending
@@ -60,9 +50,9 @@ extractJSON = (raw) ->
 
     if pending.length is 0
       console.error "JIM BAD EXIT"
-      M.saveThis newKey, newStoryIds
-      M.saveThis emoKey, taggedRows
-      M.saveThis "done:#{stepName}", true
+      S.make 'new_story_ids', newStoryIds
+      S.make 'kag_emotions', taggedRows
+      S.done()
       return
 
     outRows = taggedRows.slice()
@@ -72,15 +62,14 @@ extractJSON = (raw) ->
       meta = segment.meta ? {}
       prompt = "#{promptPrefix}#{text}#{promptSuffix}"
 
-      raw = M.callMLX 'generate',
+      raw = S.callMLX 'generate',
          model: modelDir
          prompt: prompt
          "max-tokens": String(maxTok)
          "max-kv-size": 1024
-         temp: String M.getStepParam stepName, "temperature"
-         "top-p": String M.getStepParam stepName, 'top_p'
-         "top-k": String M.getStepParam stepName, 'top_k'
-        , true
+         temp: String S.param "temperature"
+         "top-p": String S.param 'top_p'
+         "top-k": String S.param 'top_k'
 
       outRows.push
         meta:
@@ -91,7 +80,7 @@ extractJSON = (raw) ->
       console.log "JIM Emotions from", meta.doc_id, raw
       console.log "[oracle_ask] tagged #{meta.doc_id} #{meta.paragraph_index}"
 
-    M.saveThis newKey, newStoryIds
-    M.saveThis emoKey, outRows
-    M.saveThis "done:#{stepName}", true
+    S.make 'new_story_ids', newStoryIds
+    S.make 'kag_emotions', outRows
+    S.done()
     return

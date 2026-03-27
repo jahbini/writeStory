@@ -6,6 +6,7 @@ run:
   loraLand: build/model
 
 artifacts:
+  kag_segments:       { source: out/kag_segments.jsonl }
   kag_record:         { target: out/kag_record.json }
   prompt_cache_spec:  { target: out/prompt_cache_spec.json }
   cached_prompt_text: { target: out/cached_prompt_text.txt }
@@ -20,9 +21,8 @@ download_model:
 extract_kag:
   run: kag_oracle/extract_kag.coffee
   depends_on: [never]
-  needs: []
+  needs: [kag_segments]
   makes: [kag_record]
-  kag_source_key: out/kag_segments.jsonl
   sample_index: 0
 
 build_prompt_cache_spec:

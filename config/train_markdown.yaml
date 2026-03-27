@@ -4,6 +4,26 @@ run:
   data_dir: data
   training_dir: build/train
   loraLand: build/model
+  debug_s: true
+  debug_mlx: false
+
+artifacts:
+  stories_md:
+    source: data/jim.md
+  marshalled_stories:
+    target: data/marshalled_stories.jsonl
+  new_story_ids:
+    target: out/new_story_ids.json
+  kag_emotions:
+    target: out/kag_emotions.jsonl
+  kag_viewed:
+    target: out/viewed.jsonl
+  train_rows:
+    target: build/train/train.jsonl
+  valid_rows:
+    target: build/train/valid.jsonl
+  test_rows:
+    target: build/train/test.jsonl
 download_model:
   run: story/hf_download.coffee
   depends_on: []
@@ -14,21 +34,15 @@ download_model:
 md2segments:
   run: train_markdown/md2segments.coffee
   depends_on: [download_model]
-  needs: []
-  makes: []
-  stories_md: data/jim.md
-  marshalled_stories: data//marshalled_stories.jsonl
+  needs: [stories_md]
+  makes: [marshalled_stories]
   split_mode: story
 
 oracle_ask:
   run: kag_oracle/oracle_ask.coffee
   depends_on: [md2segments]
-  needs: []
-  makes: []
-  marshalled_stories: data//marshalled_stories.jsonl
-  new_story_ids: out/new_story_ids.json
-  kag_emotions: out//kag_emotions.jsonl
-  kag_viewed: out/viewed.jsonl
+  needs: [marshalled_stories]
+  makes: [new_story_ids, kag_emotions, kag_viewed]
   prompt_prefix: |
     You are a classifier. Given this sample <<< 
   prompt_suffix: |
@@ -50,26 +64,19 @@ oracle_ask:
 prepare_training_data:
   run: train_markdown/prepare_training_data.coffee
   depends_on: [oracle_ask]
-  needs: []
-  makes: []
-  marshalled_stories: data/marshalled_stories.jsonl
-  new_story_ids: out/new_story_ids.json
-  train_file: build/train/train.jsonl
-  valid_file: build/train/valid.jsonl
-  test_file: build/train/test.jsonl
+  needs: [marshalled_stories, new_story_ids]
+  makes: [train_rows, valid_rows, test_rows]
 
 lora_train:
   run: train_markdown/lora_train.coffee
   depends_on: [prepare_training_data]
-  needs: []
+  needs: [train_rows, valid_rows, test_rows]
   makes: []
+  test_only: false
   batch_size: 1
   iters: 200
   max_seq_length: 1024
   learning_rate: 0.00005
-  train_file: build/train/train.jsonl
-  valid_file: build/train/valid.jsonl
-  test_file: build/train/test.jsonl
   adapter_path: build/adapter
   resume_adapter_file: build/adapter/adapters.safetensors
   stdout_text: out//lora_train.txt
@@ -90,10 +97,6 @@ talk_story:
 rotate_merged:
   run: train_markdown/rotate_merged.coffee
   depends_on: [oracle_ask]
-  needs: []
-  makes: []
-  viewed_segments: out/viewed.jsonl
-  train_file: build/train/train.jsonl
-  valid_file: build/train/valid.jsonl
-  test_file: build/train/test.jsonl
+  needs: [kag_viewed]
+  makes: [train_rows, valid_rows, test_rows]
   train_prompt_prefix: "Continue in the same voice and mannner as the text below."

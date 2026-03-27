@@ -1,5 +1,4 @@
 fs = require 'fs'
-path = require 'path'
 
 clean = (txt) ->
   s = String(txt ? '')
@@ -31,31 +30,17 @@ safe = (title) ->
 @step =
   desc: "Convert markdown stories into marshalled JSONL segments"
 
-  action: (M, stepName) ->
-    inPath = M.getStepParam stepName, 'stories_md'
-    outKey = M.getStepParam stepName, 'marshalled_stories'
-    mode   = M.getStepParam stepName, 'split_mode'
+  action: (S) ->
+    raw = await S.need 'stories_md'
+    existing = S.theLowdown('marshalled_stories')?.value
+    mode = S.param 'split_mode'
 
-    existing = M.theLowdown(outKey).value
-    if Array.isArray(existing) and existing.length > 0
+    if existing isnt undefined
       console.log "[md2segments] output already exists, skipping"
-      M.saveThis "done:#{stepName}", true
+      S.done()
       return
 
-    execDir = M.theLowdown('env/EXEC')?.value ? process.cwd()
-    cwdDir  = M.theLowdown('env/CWD')?.value ? process.cwd()
-
-    resolveInputPath = (p) ->
-      return null unless typeof p is 'string' and p.length > 0
-      return p if path.isAbsolute(p)
-      fromExec = path.resolve(execDir, p)
-      return fromExec if fs.existsSync(fromExec)
-      path.resolve(cwdDir, p)
-
-    inputPath = resolveInputPath inPath
-    throw new Error "Markdown not found: #{inPath}" unless inputPath? and fs.existsSync(inputPath)
-
-    raw = fs.readFileSync inputPath, 'utf8'
+    throw new Error "[#{S.stepName}] stories_md must be a string artifact" unless typeof raw is 'string'
 
     unless mode in ['story', 'paragraph']
       throw new Error "Unsupported split_mode: #{mode}"
@@ -110,6 +95,6 @@ safe = (title) ->
           index += 1
 
     console.log "[md2segments] stories:", stories.length, "segments:", rows.length
-    M.saveThis outKey, rows
-    M.saveThis "done:#{stepName}", true
+    S.make 'marshalled_stories', rows
+    S.done()
     return

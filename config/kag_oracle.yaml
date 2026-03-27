@@ -4,6 +4,24 @@ run:
   data_dir: data
   training_dir: build/train
   loraLand: build/model
+  debug_s: true
+  debug_mlx: false
+
+artifacts:
+  stories_md:
+    source: data/jim.md
+  marshalled_stories:
+    target: data/marshalled_stories.jsonl
+  new_story_ids:
+    target: out/new_story_ids.json
+  kag_emotions:
+    target: out/kag_emotions.jsonl
+  kag_viewed:
+    target: out/viewed.jsonl
+  kag_segments:
+    target: out/kag_segments.jsonl
+  story_text:
+    target: out/story.txt
 
 download_model:
   run: story/hf_download.coffee
@@ -15,10 +33,8 @@ download_model:
 md2segments:
   run: train_markdown/md2segments.coffee
   depends_on: [download_model]
-  needs: []
-  makes: []
-  stories_md: data/jim.md
-  marshalled_stories: data/marshalled_stories.jsonl
+  needs: [stories_md]
+  makes: [marshalled_stories]
   split_mode: paragraph
 
 quantize_model:
@@ -33,12 +49,8 @@ quantize_model:
 oracle_ask:
   run: kag_oracle/oracle_ask.coffee
   depends_on: [md2segments, quantize_model]
-  needs: []
-  makes: []
-  marshalled_stories: data/marshalled_stories.jsonl
-  new_story_ids: out/new_story_ids.json
-  kag_emotions: out/kag_emotions.jsonl
-  kag_viewed: out/viewed.jsonl
+  needs: [marshalled_stories]
+  makes: [new_story_ids, kag_emotions, kag_viewed]
   model_dir: build/model4
   quantized_model_memo_key: quantizedModelDir
   prompt_prefix: |
@@ -72,8 +84,22 @@ oracle_ask:
 prepare_kag_segments:
   run: kag_oracle/prepare_kag_segments.coffee
   depends_on: [oracle_ask]
+  needs: [marshalled_stories, kag_emotions]
+  makes: [kag_segments]
+
+talk_story:
+  run: train_markdown/polish_story.coffee
+  depends_on: [prepare_kag_segments]
   needs: []
-  makes: []
-  marshalled_stories: data/marshalled_stories.jsonl
-  kag_emotions: out/kag_emotions.jsonl
-  kag_segments: out/kag_segments.jsonl
+  makes: [story_text]
+  model_dir: build/model4
+  story_fragment: A quiet ordinary day turns into a memorable Jim story.
+  prompt_text: |
+    Write a new Jim story in first person.
+
+    Keep the voice reflective, concrete, and slightly humorous.
+    Stay grounded in ordinary lived experience.
+    Return only the finished story.
+  max_tokens: 2000
+  temperature: 0.7
+  min_tokens: 500

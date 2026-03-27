@@ -289,42 +289,6 @@ normalizeArtifactKeys = (d) ->
   return [d] if typeof d is 'string'
   throw new Error "needs/makes must be string or array"
 
-resolveReadPath = (p, cwd, execDir) ->
-  return null unless typeof p is 'string' and p.length > 0
-  if path.isAbsolute(p)
-    return p if fs.existsSync(p)
-    return null
-  fromCwd = path.resolve(cwd, p)
-  return fromCwd if fs.existsSync(fromCwd)
-  fromExec = path.resolve(execDir, p)
-  return fromExec if fs.existsSync(fromExec)
-  null
-
-readArtifactFile = (p, cwd, execDir) ->
-  full = resolveReadPath(p, cwd, execDir)
-  return null unless full?
-  ext = path.extname(full).toLowerCase()
-  raw = fs.readFileSync(full, 'utf8')
-  value = switch ext
-    when '.json' then JSON.parse(raw)
-    when '.yaml', '.yml' then yaml.load(raw)
-    else raw
-  { full, value }
-
-writeArtifactFile = (p, value, cwd) ->
-  return unless typeof p is 'string' and p.length > 0
-  full = if path.isAbsolute(p) then path.resolve(p) else path.resolve(cwd, p)
-  fs.mkdirSync(path.dirname(full), { recursive: true })
-  ext = path.extname(full).toLowerCase()
-  if ext is '.json'
-    fs.writeFileSync(full, JSON.stringify(value, null, 2), 'utf8')
-  else if ext is '.yaml' or ext is '.yml'
-    fs.writeFileSync(full, yaml.dump(value), 'utf8')
-  else
-    out = if typeof value is 'string' then value else JSON.stringify(value, null, 2)
-    fs.writeFileSync(full, out, 'utf8')
-  full
-
 discoverSteps = (spec) ->
   steps = {}
   for own k, v of spec
@@ -390,7 +354,136 @@ terminalSteps = (steps) ->
 isNewStyleStep = (p) ->
   try /\@step\s*=/.test fs.readFileSync(p,'utf8') catch then false
 
-runStep = (n, def, exp, M, S, active) ->
+createStepLedger = (memo, stepName, resolveArtifact, artifactSpecFor) ->
+  getDecls = ->
+    stepP = memo.theLowdown("params/#{stepName}.yaml")?.value ? {}
+    needs = normalizeArtifactKeys(stepP.needs ? [])
+    makes = normalizeArtifactKeys(stepP.makes ? [])
+    { needs, makes }
+
+  debugEnabled = ->
+    memo.getStepParam(stepName, 'debug_s') is true
+
+  describeArtifact = (artifactKey) ->
+    spec = artifactSpecFor artifactKey
+    return artifactKey unless spec?
+    if isPlainObject(spec)
+      source = spec.source ? spec.key
+      target = spec.target
+      return "#{artifactKey} source=#{source}" if source?
+      return "#{artifactKey} target=#{target}" if target?
+      return artifactKey
+    "#{artifactKey} source=#{spec}"
+
+  debug = (parts...) ->
+    return unless debugEnabled()
+    console.log "[#{new Date().toISOString()}] [S #{stepName}]", parts...
+
+  ledger =
+    stepName: stepName
+
+    param: (key, defaultValue) ->
+      debug "param request", key
+      value = memo.getStepParam stepName, key
+      if value is undefined and arguments.length >= 2
+        debug "param default", key, defaultValue
+        return defaultValue
+      if value is undefined
+        debug "param missing", key
+        console.error "[#{stepName}] Missing required param '#{key}'"
+        throw new Error "[#{stepName}] Missing required param '#{key}'"
+      debug "param resolved", key, "(#{typeof value})", value
+      value
+
+    getStepParam: (nameOrKey, key, defaultValue = undefined) ->
+      if arguments.length >= 2
+        return memo.getStepParam(nameOrKey, key, defaultValue)
+      @param(nameOrKey, defaultValue)
+
+    need: (artifactKey) ->
+      { needs, makes } = getDecls()
+      debug "need request", describeArtifact(artifactKey), "declared needs=", needs.join(','), "makes=", makes.join(',')
+      declared = needs.includes(artifactKey) or makes.includes(artifactKey)
+      throw new Error "[#{stepName}] Artifact '#{artifactKey}' must be declared in needs or makes" unless declared
+
+      entry = memo.theLowdown artifactKey
+      value = entry?.value
+      if value is undefined and needs.includes(artifactKey)
+        debug "need waiting", describeArtifact(artifactKey)
+        value = await entry.notifier
+        debug "need awakened", describeArtifact(artifactKey), "(#{typeof value})"
+
+      if value is undefined
+        debug "need missing", describeArtifact(artifactKey)
+        console.error "[#{stepName}] Missing required artifact '#{artifactKey}'"
+        throw new Error "[#{stepName}] Missing required artifact '#{artifactKey}'"
+      debug "need resolved", describeArtifact(artifactKey), "(#{typeof value})"
+      value
+
+    peek: (artifactKey, defaultValue = undefined) ->
+      { needs, makes } = getDecls()
+      debug "peek request", describeArtifact(artifactKey), "declared needs=", needs.join(','), "makes=", makes.join(',')
+      declared = needs.includes(artifactKey) or makes.includes(artifactKey)
+      throw new Error "[#{stepName}] Artifact '#{artifactKey}' must be declared in needs or makes" unless declared
+
+      entry = memo.theLowdown artifactKey
+      value = entry?.value
+      if value is undefined
+        spec = artifactSpecFor artifactKey
+        source = if isPlainObject(spec) then spec.source ? spec.key else spec
+        target = if isPlainObject(spec) then spec.target else null
+
+        if typeof source is 'string'
+          debug "peek checking source key", source
+          srcEntry = memo.theLowdown source
+          value = srcEntry?.value
+          if value isnt undefined
+            memo.saveThis artifactKey, value
+            debug "peek resolved from source key", describeArtifact(artifactKey), "(#{typeof value})"
+
+        if value is undefined and typeof target is 'string'
+          debug "peek checking target key", target
+          targetEntry = memo.theLowdown target
+          value = targetEntry?.value
+          if value isnt undefined
+            memo.saveThis artifactKey, value
+            debug "peek resolved from target key", describeArtifact(artifactKey), "(#{typeof value})"
+
+      if value is undefined
+        debug "peek default", describeArtifact(artifactKey), defaultValue
+        return defaultValue
+      debug "peek resolved", describeArtifact(artifactKey), "(#{typeof value})"
+      value
+
+    make: (artifactKey, value) ->
+      { makes } = getDecls()
+      debug "make request", describeArtifact(artifactKey), "declared makes=", makes.join(',')
+      throw new Error "[#{stepName}] Artifact '#{artifactKey}' must be declared in makes" unless makes.includes artifactKey
+      memo.saveThis artifactKey, value
+      debug "make wrote", describeArtifact(artifactKey), "(#{typeof value})"
+      value
+
+    done: ->
+      debug "done"
+      memo.saveThis "done:#{stepName}", true
+      true
+
+    fail: (err) ->
+      debug "fail", String(err?.message ? err)
+      memo.saveThis "done:#{stepName}", false
+      throw err
+
+    saveThis: (key, value) -> memo.saveThis key, value
+    theLowdown: (key) -> memo.theLowdown key
+    waitFor: (keys, andDo) -> memo.waitFor keys, andDo
+    addMetaRule: (name, regex, handler) -> memo.addMetaRule name, regex, handler
+    callMLX: (cmdType, payload, dbug) ->
+      mlxDebug = if arguments.length >= 3 then dbug else @param('debug_mlx', false)
+      memo.callMLX cmdType, payload, mlxDebug
+
+  ledger
+
+runStep = (n, def, exp, M, S, active, resolveArtifact, artifactSpecFor) ->
   new Promise (res, rej) ->
     active.count += 1
     active.names ?= new Set()
@@ -419,6 +512,24 @@ runStep = (n, def, exp, M, S, active) ->
 
     script = path.join(EXEC,'scripts',def.run)
 
+    primeStepMakes = ->
+      for artifactKey in (def.makes ? [])
+        entry = M.theLowdown artifactKey
+        continue if entry?.value isnt undefined
+
+        spec = artifactSpecFor artifactKey
+        continue unless isPlainObject(spec)
+        target = spec.target
+        continue unless typeof target is 'string'
+
+        targetEntry = M.theLowdown target
+        targetVal = targetEntry?.value
+        continue if targetVal is undefined
+
+        M.saveThis artifactKey, targetVal
+
+    primeStepMakes()
+
     # ---- SACRED PATH ----
     if /\.coffee$/i.test(script) and isNewStyleStep(script)
       try delete require.cache[require.resolve(script)] catch then null
@@ -427,7 +538,8 @@ runStep = (n, def, exp, M, S, active) ->
         finish(false, "Missing @step.action in #{script}")
         return
       try
-        pp=Promise.resolve(step.action(M,n))
+        L = createStepLedger(M, n, resolveArtifact, artifactSpecFor)
+        pp=Promise.resolve(step.action(L,n,M))
         pp.then -> finish(true)
         pp.catch (e)-> finish(false, e.message)
       catch e 
@@ -462,6 +574,76 @@ installGetStepParam = (M) ->
     return globalP[key] if globalP? and globalP[key]?
 
     undefined
+
+###
+UI integration design for artifact I/O
+-------------------------------------------------------------------
+`StepLedger.need(artifactKey)`, `StepLedger.peek(artifactKey, defaultValue)`,
+and `StepLedger.make(artifactKey, value)` are the correct hook points for
+UI-facing pipeline state because they sit exactly on the explicit
+`needs` / `makes` contract between a step and its declared resources.
+
+If a UI layer is added, emit structured state updates here rather than
+inside individual step scripts. That keeps the UI deterministic and lets
+the runner remain the single source of truth for resource flow.
+
+Critical boundary:
+- After meta devices are initialized, artifact persistence and artifact
+  recovery must flow through Memo only.
+- Do not add direct filesystem reads/writes for artifact sources or
+  artifact targets inside the runner.
+- If an artifact path needs support, add or extend the appropriate meta
+  device instead of bypassing Memo.
+
+Recommended UI memo keys:
+
+  ui/steps/<stepName>/needs/<artifactKey>
+    direction: "need"
+    step: <stepName>
+    artifact: <artifactKey>
+    declared_in: "needs" | "makes"
+    status: "waiting" | "resolved" | "defaulted" | "missing"
+    used_default: true | false
+    observed_at: <ISO timestamp>
+    resolved_at: <ISO timestamp or null>
+    value_summary:
+      kind: "array" | "object" | "string" | "number" | "boolean" | "null" | "undefined"
+      count: <array/object size if cheap>
+      bytes: <string length if cheap>
+
+  ui/steps/<stepName>/makes/<artifactKey>
+    direction: "make"
+    step: <stepName>
+    artifact: <artifactKey>
+    status: "written"
+    observed_at: <ISO timestamp>
+    value_summary: <same shape as above>
+
+  ui/steps/<stepName>/peeks/<artifactKey>
+    direction: "peek"
+    step: <stepName>
+    artifact: <artifactKey>
+    status: "resolved" | "defaulted" | "missing"
+    observed_at: <ISO timestamp>
+
+Recommended append-only event stream:
+
+  ui/events/<monotonic id>
+    type: "artifact_need" | "artifact_make"
+    step: <stepName>
+    artifact: <artifactKey>
+    phase: "start" | "resolved" | "defaulted" | "written" | "error"
+    at: <ISO timestamp>
+
+Implementation notes:
+- Emit "start" before awaiting a missing `need`.
+- Emit "resolved" once the artifact value is available.
+- Emit a required-param error when `param(key)` has no configured value and no explicit default.
+- Emit "written" immediately before or after `saveThis` in `make`.
+- Keep summaries cheap and deterministic; do not deep-inspect large values.
+- Never require step scripts to know about UI keys.
+- Keep UI state observational only; it must not affect scheduling.
+###
 
 # -------------------------------------------------------------------
 # MODIFY main()
@@ -537,18 +719,19 @@ main = ->
     if isPlainObject(spec) and spec.hasOwnProperty('value')
       return spec.value
     source = if isPlainObject(spec) then spec.source ? spec.key else spec
+    target = if isPlainObject(spec) then spec.target else null
     unless source?
       if producedBy[artifactKey]?
         outEntry = M.theLowdown(artifactKey)
         outVal = outEntry.value
+        return outVal if outVal isnt undefined
+        if typeof target is 'string'
+          targetEntry = M.theLowdown(target)
+          targetVal = targetEntry.value
+          return targetVal if targetVal isnt undefined
         outVal = await outEntry.notifier if outVal is undefined
         return outVal
       throw new Error "Artifact '#{artifactKey}' missing source/value declaration"
-    if typeof source is 'string'
-      fromFile = readArtifactFile(source, CWD, EXEC)
-      if fromFile?
-        M.saveThis(source, fromFile.value)
-        return fromFile.value
     srcEntry = M.theLowdown(source)
     val = srcEntry.value
     val = await srcEntry.notifier if val is undefined
@@ -559,7 +742,6 @@ main = ->
     return unless spec?
     target = if isPlainObject(spec) then spec.target else null
     if target?
-      writeArtifactFile(target, value, CWD)
       M.saveThis(target, value)
     M.saveThis(artifactKey, value)
 
@@ -616,7 +798,7 @@ main = ->
         return if M.theLowdown("done:#{n}").value is true
         scheduled.add n
         Promise.resolve(wireInputsForStep(n))
-          .then -> runStep(n, steps[n], experiment, M, S, active)
+          .then -> runStep(n, steps[n], experiment, M, S, active, resolveArtifact, (artifactKey) -> artifacts[artifactKey])
           .then -> collectOutputsForStep(n)
           .catch (e) ->
             console.error "! Step #{n} error:", e.message

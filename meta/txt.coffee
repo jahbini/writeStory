@@ -8,7 +8,7 @@ module.exports = (M, opts={}) ->
     writeText = (p,s) -> fs.mkdirSync(path.dirname(p),{recursive:true}); fs.writeFileSync(p,s,'utf8')
 
     M.addMetaRule "txt",
-      /\.txt$/i,
+      /\.(txt|md)$/i,
       (key, value) ->
         dest = path.join(baseDir, key)
         if value is undefined

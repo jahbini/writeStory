@@ -4,6 +4,28 @@ run:
   data_dir: data
   training_dir: build/train
   loraLand: build/model
+  debug_s: true
+  debug_mlx: false
+
+artifacts:
+  stories_md:
+    source: data/jim.md
+  marshalled_stories:
+    target: data/marshalled_stories.jsonl
+  new_story_ids:
+    target: out/new_story_ids.json
+  trained_story_ids:
+    target: out/trained_story_ids.json
+  train_rows:
+    target: build/train/train.jsonl
+  valid_rows:
+    target: build/train/valid.jsonl
+  test_rows:
+    target: build/train/test.jsonl
+  lora_stdout:
+    target: out/lora_train.txt
+  story_text:
+    target: out/story.txt
 
 download_model:
   run: story/hf_download.coffee
@@ -15,53 +37,55 @@ download_model:
 md2segments:
   run: train_markdown/md2segments.coffee
   depends_on: [download_model]
-  needs: []
-  makes: []
-  stories_md: data/jim.md
-  marshalled_stories: data/marshalled_stories.jsonl
+  needs: [stories_md]
+  makes: [marshalled_stories]
   split_mode: paragraph
 
 select_training_batch:
   run: train_markdown/select_training_batch.coffee
   depends_on: [md2segments]
-  needs: []
-  makes: []
-  marshalled_stories: data/marshalled_stories.jsonl
-  new_story_ids: out/new_story_ids.json
-  trained_story_ids: out/trained_story_ids.json
+  needs: [marshalled_stories]
+  makes: [new_story_ids]
+  trained_story_ids_path: out/trained_story_ids.json
   batch_size: 4
 
 prepare_training_data:
   run: train_markdown/prepare_training_data.coffee
   depends_on: [select_training_batch]
-  needs: []
-  makes: []
-  marshalled_stories: data/marshalled_stories.jsonl
-  new_story_ids: out/new_story_ids.json
-  train_file: build/train/train.jsonl
-  valid_file: build/train/valid.jsonl
-  test_file: build/train/test.jsonl
+  needs: [marshalled_stories, new_story_ids]
+  makes: [train_rows, valid_rows, test_rows]
 
 lora_train:
   run: train_markdown/lora_train.coffee
   depends_on: [prepare_training_data]
-  needs: []
-  makes: []
+  needs: [train_rows, valid_rows, test_rows]
+  makes: [lora_stdout]
+  test_only: false
   batch_size: 1
   iters: 200
   max_seq_length: 1024
   learning_rate: 0.00005
-  train_file: build/train/train.jsonl
-  valid_file: build/train/valid.jsonl
-  test_file: build/train/test.jsonl
   adapter_path: build/adapter
   resume_adapter_file: build/adapter/adapters.safetensors
-  stdout_text: out/lora_train.txt
 
 record_trained_batch:
   run: train_markdown/record_trained_batch.coffee
   depends_on: [lora_train]
+  needs: [new_story_ids]
+  makes: [trained_story_ids]
+
+talk_story:
+  run: train_markdown/polish_story.coffee
+  depends_on: [record_trained_batch]
   needs: []
-  makes: []
-  new_story_ids: out/new_story_ids.json
-  trained_story_ids: out/trained_story_ids.json
+  makes: [story_text]
+  adapter_path: build/adapter
+  prompt_text: |
+    Write a new Jim story in first person.
+
+    Keep the voice reflective, concrete, and slightly humorous.
+    Stay grounded in ordinary lived experience.
+    Return only the finished story.
+  max_tokens: 2000
+  temperature: 0.7
+  min_tokens: 500

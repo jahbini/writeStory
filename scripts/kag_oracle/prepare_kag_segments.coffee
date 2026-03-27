@@ -1,24 +1,12 @@
-fs = require 'fs'
-path = require 'path'
-
 @step =
   desc: "Build paragraph-level KAG input records from segments and emotion tags"
 
-  action: (M, stepName) ->
-    storiesKey = M.getStepParam stepName, 'marshalled_stories'
-    emotionsKey = M.getStepParam stepName, 'kag_emotions'
-    outputPath = M.getStepParam stepName, 'kag_segments'
+  action: (S) ->
+    stories = await S.need 'marshalled_stories'
+    emotionRows = await S.need 'kag_emotions'
 
-    storiesEntry = M.theLowdown storiesKey
-    stories = storiesEntry?.value
-    stories = await storiesEntry.notifier if stories is undefined
-
-    emotionsEntry = M.theLowdown emotionsKey
-    emotionRows = emotionsEntry?.value
-    emotionRows = await emotionsEntry.notifier if emotionRows is undefined
-
-    throw new Error "[#{stepName}] #{storiesKey} must be an array" unless Array.isArray(stories)
-    throw new Error "[#{stepName}] #{emotionsKey} must be an array" unless Array.isArray(emotionRows)
+    throw new Error "[#{S.stepName}] marshalled_stories must be an array" unless Array.isArray(stories)
+    throw new Error "[#{S.stepName}] kag_emotions must be an array" unless Array.isArray(emotionRows)
 
     lookup = Object.create null
     for row in emotionRows
@@ -30,11 +18,8 @@ path = require 'path'
       continue unless emotions?
       lookup["#{docId}|#{paragraphIndex}"] = emotions
 
-    fs.mkdirSync path.dirname(outputPath), { recursive: true }
-    fs.writeFileSync outputPath, '', 'utf8'
-
     matched = 0
-    rowsWritten = 0
+    outRows = []
 
     for segment in stories
       docId = segment?.meta?.doc_id
@@ -60,11 +45,11 @@ path = require 'path'
         text: text
         emotions: emotions
 
-      fs.appendFileSync outputPath, JSON.stringify(row) + "\n", 'utf8'
-      rowsWritten += 1
+      outRows.push row
 
     console.log "[prepare_kag_segments] segments matched:", matched
-    console.log "[prepare_kag_segments] rows written:", rowsWritten
+    console.log "[prepare_kag_segments] rows written:", outRows.length
 
-    M.saveThis "done:#{stepName}", true
+    S.make 'kag_segments', outRows
+    S.done()
     return

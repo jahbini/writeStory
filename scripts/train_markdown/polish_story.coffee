@@ -45,57 +45,64 @@ cleanGeneratedText = (prompt, rawOutput) ->
 @step =
   desc: "Expand and polish story using LLM"
 
-  action: (M, stepName) ->
-    storyKey = M.getStepParam(stepName, 'story_key')
-    storyFragment = M.getStepParam(stepName, 'story_fragment')
-    outputText = M.getStepParam(stepName, 'output_text')
-    promptKey = M.getStepParam(stepName, 'prompt_key')
+  action: (S) ->
+    storyKey = S.param 'story_key', null
+    storyFragment = S.param 'story_fragment', null
+    promptKey = S.param 'prompt_key', null
+    promptText = S.param 'prompt_text', null
+    modelMemoKey = S.param 'model_memo_key', 'modelDir'
+    explicitModelDir = S.param 'model_dir', null
 
     story = null
     baseText = ''
 
     if storyKey?
-      storyEntry = M.theLowdown storyKey
+      storyEntry = S.theLowdown storyKey
       story = storyEntry?.value
       if story is undefined
         if typeof storyEntry?.waitFor is 'function'
           story = await storyEntry.waitFor()
         else if storyEntry?.notifier?
           story = await storyEntry.notifier
-      throw new Error "[#{stepName}] Missing input key '#{storyKey}'" if story is undefined
+      throw new Error "[#{S.stepName}] Missing input key '#{storyKey}'" if story is undefined
       baseText = story.text ? ''
     else
       baseText = storyFragment ? ''
       story = text: baseText
 
     prompt = null
-    if promptKey?
-      promptEntry = M.theLowdown promptKey
+    if promptText?
+      prompt = promptText
+    else if promptKey?
+      promptEntry = S.theLowdown promptKey
       prompt = promptEntry?.value
       if prompt is undefined
         if typeof promptEntry?.waitFor is 'function'
           prompt = await promptEntry.waitFor()
         else if promptEntry?.notifier?
           prompt = await promptEntry.notifier
-      throw new Error "[#{stepName}] Missing input key '#{promptKey}'" if prompt is undefined
+      throw new Error "[#{S.stepName}] Missing input key '#{promptKey}'" if prompt is undefined
     else
       prompt = buildPrompt baseText
-    modelDir = M.theLowdown('modelDir')?.value
-    throw new Error "[#{stepName}] Missing modelDir in memo" unless modelDir?
+    modelDir = explicitModelDir ? S.theLowdown(modelMemoKey)?.value
+    throw new Error "[#{S.stepName}] Missing modelDir in memo" unless modelDir?
 
-    adapterPath = M.getStepParam(stepName, 'adapter_path')
+    adapterPath = S.param 'adapter_path', null
 
-    temperature = M.getStepParam(stepName, 'temperature')
-    maxTokens   = M.getStepParam(stepName, 'max_tokens')
-    minTokens   = M.getStepParam(stepName, 'min_tokens')
+    temperature = S.param 'temperature'
+    maxTokens   = S.param 'max_tokens'
+    minTokens   = S.param 'min_tokens'
 
-    rawOutput = M.callMLX 'generate',
+    mlxArgs =
       model: modelDir
-      "adapter-path": adapterPath
       prompt: prompt
       temp: String(temperature)
       "max-tokens": String(maxTokens)
       "min-tokens": String(minTokens)
+
+    mlxArgs["adapter-path"] = adapterPath if adapterPath?
+
+    rawOutput = S.callMLX 'generate', mlxArgs
 
     polishedText = cleanGeneratedText prompt, rawOutput
 
@@ -104,7 +111,7 @@ cleanGeneratedText = (prompt, rawOutput) ->
       text: polishedText
       source_story: story
 
-    M.saveThis "story_polished", out
-    M.saveThis outputText, polishedText
-    M.saveThis "done:#{stepName}", true
+    S.saveThis "story_polished", out
+    S.make 'story_text', polishedText
+    S.done()
     return
