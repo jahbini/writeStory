@@ -80,7 +80,6 @@ extractJSON = (raw) ->
          temp: String M.getStepParam stepName, "temperature"
          "top-p": String M.getStepParam stepName, 'top_p'
          "top-k": String M.getStepParam stepName, 'top_k'
-        , true
 
       outRows.push
         meta:
