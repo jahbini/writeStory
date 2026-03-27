@@ -74,22 +74,6 @@ record_trained_batch:
   needs: [new_story_ids]
   makes: [trained_story_ids]
 
-talk_story:
-  run: train_markdown/polish_story.coffee
-  depends_on: [record_trained_batch]
-  needs: []
-  makes: [story_text]
-  adapter_path: build/adapter
-  prompt_text: |
-    Write a new Jim story in first person.
-
-    Keep the voice reflective, concrete, and slightly humorous.
-    Stay grounded in ordinary lived experience.
-    Return only the finished story.
-  max_tokens: 2000
-  temperature: 0.7
-  min_tokens: 500
-
 build_prompt_cache_spec:
   run: train_markdown/build_prompt_cache_spec.coffee
   depends_on: [lora_train]
