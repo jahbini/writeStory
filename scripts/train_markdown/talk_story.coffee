@@ -42,9 +42,6 @@ cleanGeneratedText = (prompt, rawOutput) ->
   action: (M, stepName) ->
     adapterPath  = M.getStepParam stepName, 'adapter_path'
     storyFragment = M.getStepParam stepName, 'story_fragment'
-    maxTokens    = M.getStepParam stepName, 'max_tokens'
-    temperature  = M.getStepParam stepName, 'temperature'
-    minTokens    = M.getStepParam stepName, 'min_tokens'
     outputText   = M.getStepParam stepName, 'output_text'
 
     modelDir = M.theLowdown('modelDir')?.value
@@ -54,9 +51,6 @@ cleanGeneratedText = (prompt, rawOutput) ->
       model: modelDir
       "adapter-path": adapterPath
       prompt: prompt
-      "max-tokens": String(maxTokens)
-      temp: String(temperature)
-      "min-tokens": String(minTokens)
 
     output = cleanGeneratedText prompt, rawOutput
 

@@ -1,18 +1,5 @@
 fs = require 'fs'
 path = require 'path'
-cp = require 'child_process'
-
-getParam = (M, stepName, key, defaultValue = undefined) ->
-  stepParams = M.theLowdown("params/#{stepName}.yaml")?.value ? {}
-  globalParams = M.theLowdown("params/_global.yaml")?.value ? {}
-
-  if Object.prototype.hasOwnProperty.call(stepParams, key)
-    return stepParams[key]
-
-  if Object.prototype.hasOwnProperty.call(globalParams, key)
-    return globalParams[key]
-
-  defaultValue
 
 listFiles = (rootDir) ->
   out = []
@@ -48,26 +35,13 @@ inspectMLXModelDir = (modelDir) ->
     reason: if missing.length then "missing #{missing.join(', ')}" else 'ok'
   }
 
-runQuantize = (sourceDir, targetDir) ->
-  res = cp.spawnSync 'mlx_lm.convert', [
-    '--hf-path', sourceDir
-    '--mlx-path', targetDir
-    '-q'
-    '--q-bits', '4'
-  ],
-    stdio: 'inherit'
-
-  throw res.error if res.error?
-  return if res.status is 0
-  throw new Error "mlx_lm.convert failed with exit #{res.status}"
-
 @step =
   desc: "Quantize the laptop oracle MLX model into build/model4"
 
-  action: (M, stepName) ->
-    sourceParam = getParam M, stepName, 'source_model_dir', 'build/model'
-    targetParam = getParam M, stepName, 'quantized_model_dir', 'build/model4'
-    memoKey = getParam M, stepName, 'quantized_model_memo_key', 'quantizedModelDir'
+  action: (S) ->
+    sourceParam = S.param 'source_model_dir', 'build/model'
+    targetParam = S.param 'quantized_model_dir', 'build/model4'
+    memoKey = S.param 'quantized_model_memo_key', 'quantizedModelDir'
 
     sourceDir = path.resolve sourceParam
     targetDir = path.resolve targetParam
@@ -78,8 +52,8 @@ runQuantize = (sourceDir, targetDir) ->
     targetState = inspectMLXModelDir targetDir
     if targetState.valid
       console.log "[quantize_model] quantized model already exists, skipping"
-      M.saveThis memoKey, targetDir
-      M.saveThis "done:#{stepName}", true
+      S.saveThis memoKey, targetDir
+      S.done()
       return
 
     if fs.existsSync(targetDir)
@@ -89,12 +63,14 @@ runQuantize = (sourceDir, targetDir) ->
     fs.mkdirSync path.dirname(targetDir), recursive: true
 
     console.log "[quantize_model] creating #{targetParam} from #{sourceParam}"
-    runQuantize sourceDir, targetDir
+    S.callMLX 'convert',
+      "hf-path": sourceDir
+      "mlx-path": targetDir
 
     finalState = inspectMLXModelDir targetDir
     throw new Error "[quantize_model] quantized model invalid at #{targetDir}: #{finalState.reason}" unless finalState.valid
 
     console.log "[quantize_model] quantization complete"
-    M.saveThis memoKey, targetDir
-    M.saveThis "done:#{stepName}", true
+    S.saveThis memoKey, targetDir
+    S.done()
     return

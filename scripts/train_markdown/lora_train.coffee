@@ -24,10 +24,6 @@ hasAdapterConfig = (adapterPath) ->
   desc: "Run MLX LoRA training for markdown-derived train and valid sets"
 
   action: (S) ->
-    batchSize    = S.param 'batch_size'
-    iters        = S.param 'iters'
-    maxSeqLength = S.param 'max_seq_length'
-    learningRate = S.param 'learning_rate'
     testOnly     = S.param 'test_only', false
     adapterPath  = S.param 'adapter_path'
     resumeFile   = S.param 'resume_adapter_file'
@@ -46,10 +42,6 @@ hasAdapterConfig = (adapterPath) ->
     args =
       model: modelDir
       data: trainingDir
-      "batch-size": String(batchSize)
-      iters: String(iters)
-      "max-seq-length": String(maxSeqLength)
-      "learning-rate": String(learningRate)
 
     if testOnly
       args.test = null

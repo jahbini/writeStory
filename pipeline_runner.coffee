@@ -379,6 +379,58 @@ createStepLedger = (memo, stepName, resolveArtifact, artifactSpecFor) ->
     return unless debugEnabled()
     console.log "[#{new Date().toISOString()}] [S #{stepName}]", parts...
 
+  getStepParams = ->
+    memo.theLowdown("params/#{stepName}.yaml")?.value ? {}
+
+  legacyMlxAliases =
+    generate:
+      temperature: 'temp'
+      max_tokens: 'max-tokens'
+      min_tokens: 'min-tokens'
+      top_p: 'top-p'
+      top_k: 'top-k'
+      max_kv_size: 'max-kv-size'
+      repeat_penalty: 'repeat-penalty'
+    lora:
+      batch_size: 'batch-size'
+      iters: 'iters'
+      max_seq_length: 'max-seq-length'
+      learning_rate: 'learning-rate'
+    convert:
+      q_bits: 'q-bits'
+      q_group: 'q-group-size'
+      dtype: 'dtype'
+    fuse:
+      dtype: 'dtype'
+
+  getLegacyMlxConfig = (cmdType) ->
+    aliases = legacyMlxAliases[cmdType] ? {}
+    legacy = {}
+    for own paramKey, cliKey of aliases
+      value = memo.getStepParam stepName, paramKey
+      legacy[cliKey] = value if value isnt undefined
+    legacy
+
+  getMlxConfig = (cmdType) ->
+    stepParams = getStepParams()
+    mlxCfg = stepParams.mlx
+    merged = getLegacyMlxConfig(cmdType)
+    return merged unless isPlainObject(mlxCfg)
+    genericCfg = {}
+    commandCfg = {}
+    for own k, v of mlxCfg
+      continue if isPlainObject(v)
+      genericCfg[k] = v
+    if isPlainObject(mlxCfg[cmdType])
+      commandCfg = Object.assign {}, mlxCfg[cmdType]
+    Object.assign merged, genericCfg, commandCfg
+
+  mergeMlxPayload = (cmdType, payload) ->
+    merged = getMlxConfig(cmdType)
+    for own k, v of (payload ? {})
+      merged[k] = v
+    merged
+
   ledger =
     stepName: stepName
 
@@ -479,7 +531,9 @@ createStepLedger = (memo, stepName, resolveArtifact, artifactSpecFor) ->
     addMetaRule: (name, regex, handler) -> memo.addMetaRule name, regex, handler
     callMLX: (cmdType, payload, dbug) ->
       mlxDebug = if arguments.length >= 3 then dbug else @param('debug_mlx', false)
-      memo.callMLX cmdType, payload, mlxDebug
+      finalPayload = mergeMlxPayload cmdType, payload
+      debug "mlx request", cmdType, finalPayload
+      memo.callMLX cmdType, finalPayload, mlxDebug
 
   ledger
 

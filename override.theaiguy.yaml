@@ -2,5 +2,7 @@ pipeline: train_lora
 model: Qwen/Qwen3-4B-Instruct-2507
 
 lora_train:
-  max_seq_length: 2048
-  learning_rate: 0.00005
+  mlx:
+    lora:
+      max-seq-length: 2048
+      learning-rate: 0.00005

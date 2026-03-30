@@ -20,8 +20,7 @@ runOne = (S, modelPath, adapterPath, prompts, maxTokens) ->
     args =
       model: modelPath
       prompt: prompt
-      temp: '0.7'
-      "max-tokens": String(maxTokens)
+      "max-tokens": maxTokens
     args["adapter-path"] = adapterPath if adapterPath?
     raw = S.callMLX 'generate', args
     txt = String(raw ? '').trim()

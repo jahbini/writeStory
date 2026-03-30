@@ -69,16 +69,9 @@ cleanGeneratedText = (prompt, rawOutput) ->
 
     adapterPath = S.param 'adapter_path', null
 
-    temperature = S.param 'temperature'
-    maxTokens   = S.param 'max_tokens'
-    minTokens   = S.param 'min_tokens'
-
     mlxArgs =
       model: modelDir
       prompt: prompt
-      temp: String(temperature)
-      "max-tokens": String(maxTokens)
-      "min-tokens": String(minTokens)
 
     mlxArgs["adapter-path"] = adapterPath if adapterPath?
 

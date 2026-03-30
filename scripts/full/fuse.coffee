@@ -8,9 +8,6 @@ path = require 'path'
 
     doFuse = !!S.param 'do_fuse'
     dryRun = !!S.param 'dry_run'
-    qBits = parseInt S.param 'q_bits'
-    qGroup = parseInt S.param 'q_group'
-    dtype = S.param 'dtype'
 
     for entry in (registry.runs ? [])
       fusedDir = entry.fused_dir ? path.join(S.param('output_dir'), 'fused')
@@ -28,16 +25,12 @@ path = require 'path'
       convertArgs =
         "hf-path": entry.fused_dir ? fusedDir
         "mlx-path": quantDir
-        q: null
-        "q-bits": String(qBits)
-        "q-group-size": String(qGroup)
-        dtype: dtype
       console.log "[fuse] quantize #{entry.model_id} -> #{quantDir}"
       S.callMLX 'convert', convertArgs unless dryRun
 
       entry.quantized_dir = quantDir
-      entry.quantize_bits = qBits
-      entry.q_group_size = qGroup
+      entry.quantize_bits = S.param 'q_bits'
+      entry.q_group_size = S.param 'q_group'
 
     registry.updated_utc = new Date().toISOString().replace(/\.\d+Z$/, 'Z')
     S.make 'artifacts_registry', registry

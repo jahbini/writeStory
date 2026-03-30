@@ -27,8 +27,9 @@ oracle_ask:
 
     No explanations. No refusals. No extra text.
     
-
-  max_tokens: 280
-  temperature: 0
-  top_p: 1
-  top_k: 0
+  mlx:
+    generate:
+      max-tokens: 280
+      temp: 0
+      top-p: 1
+      top-k: 0

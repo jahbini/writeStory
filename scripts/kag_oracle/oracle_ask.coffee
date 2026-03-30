@@ -10,7 +10,6 @@ extractJSON = (raw) ->
     promptPrefix = S.param 'prompt_prefix'
     promptSuffix = S.param 'prompt_suffix'
     batchSz = S.param 'batch_size'
-    maxTok = S.param 'max_tokens'
     quantizedModelMemoKey = S.param 'quantized_model_memo_key', 'quantizedModelDir'
     modelDir = S.theLowdown(quantizedModelMemoKey)?.value ? S.param('model_dir') ? S.theLowdown('modelDir')?.value
     throw new Error "[oracle_ask] Missing model_dir/quantized model path" unless modelDir?
@@ -65,11 +64,6 @@ extractJSON = (raw) ->
       raw = S.callMLX 'generate',
          model: modelDir
          prompt: prompt
-         "max-tokens": String(maxTok)
-         "max-kv-size": 1024
-         temp: String S.param "temperature"
-         "top-p": String S.param 'top_p'
-         "top-k": String S.param 'top_k'
 
       outRows.push
         meta:

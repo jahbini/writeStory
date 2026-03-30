@@ -45,6 +45,10 @@ quantize_model:
   source_model_dir: build/model
   quantized_model_dir: build/model4
   quantized_model_memo_key: quantizedModelDir
+  mlx:
+    convert:
+      q: null
+      q-bits: 4
 
 oracle_ask:
   run: kag_oracle/oracle_ask.coffee
@@ -102,7 +106,10 @@ oracle_ask:
       "curiosity": "none|mild|moderate|strong|extreme"
     }
   batch_size: 4
-  max_tokens: 80
+  mlx:
+    generate:
+      max-tokens: 80
+      max-kv-size: 1024
 
 prepare_kag_segments:
   run: kag_oracle/prepare_kag_segments.coffee
@@ -123,6 +130,8 @@ talk_story:
     Keep the voice reflective, concrete, and slightly humorous.
     Stay grounded in ordinary lived experience.
     Return only the finished story.
-  max_tokens: 2000
-  temperature: 0.7
-  min_tokens: 500
+  mlx:
+    generate:
+      max-tokens: 2000
+      temp: 0.7
+      min-tokens: 500

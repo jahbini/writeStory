@@ -125,10 +125,13 @@ fuse:
   needs: [artifacts_registry]
   makes: [artifacts_registry]
   do_fuse: true
-  q_bits: 4
-  q_group: 32
-  dtype: float16
   dry_run: false
+  mlx:
+    convert:
+      q: null
+      q-bits: 4
+      q-group-size: 32
+      dtype: float16
 
 snapshot:
   run: full/snapshot.coffee
@@ -140,6 +143,9 @@ snapshot:
     - "What lesson would a wise elder share about patience?"
   max_new_tokens: 64
   only_model_id: ""
+  mlx:
+    generate:
+      temp: 0.7
 
 examination:
   run: full/examination.coffee
@@ -152,6 +158,9 @@ examination:
   max_new_short: 64
   max_new_long: 128
   only_model_id: ""
+  mlx:
+    generate:
+      temp: 0.7
 
 sanity:
   run: full/sanity.coffee
