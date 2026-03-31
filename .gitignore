@@ -2,6 +2,7 @@
 *.swp
 [12].log
 *.tar
+*.tgz
 
 node_modules/
 pnpm-lock.yaml

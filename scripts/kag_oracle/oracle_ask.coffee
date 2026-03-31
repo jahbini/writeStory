@@ -1,7 +1,22 @@
 extractJSON = (raw) ->
   return {} unless raw?
   block = raw.match(/\{[\s\S]*\}/)?[0]
-  try JSON.parse(block) catch then {}
+  if block?
+    try
+      return JSON.parse block
+    catch
+      null
+
+  emotions = {}
+  for line in String(raw).split /\r?\n/
+    match = line.match /^\s*\d+\.\s*#([A-Za-z0-9_-]+)\s*---\s*(.+?)\s*$/
+    continue unless match?
+    emotionKey = String(match[1]).trim().toLowerCase()
+    emotionText = String(match[2]).trim()
+    continue unless emotionKey.length and emotionText.length
+    emotions[emotionKey] = emotionText
+
+  emotions
 
 @step =
   desc: "Classify a batch of untagged markdown segments with the emotion oracle"
@@ -49,6 +64,10 @@ extractJSON = (raw) ->
 
     if pending.length is 0
       console.error "JIM BAD EXIT"
+      S.saveThis 'pipeline:shutdown',
+        by: S.stepName
+        reason: 'all stories have already been passed to the oracle'
+        timestamp: new Date().toISOString()
       S.make 'new_story_ids', newStoryIds
       S.make 'kag_emotions', taggedRows
       S.done()

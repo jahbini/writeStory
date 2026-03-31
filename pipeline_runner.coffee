@@ -846,6 +846,7 @@ main = ->
     do (n) ->
       deps = steps[n].depends_on or []
       start = ->
+        return if M.theLowdown("pipeline:shutdown").value?
         return if M.theLowdown("done:#{n}").value is true
         scheduled.add n
         Promise.resolve(wireInputsForStep(n))
