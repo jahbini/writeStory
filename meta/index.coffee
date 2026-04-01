@@ -8,6 +8,10 @@ module.exports = (M, opts = {}) ->
   files = fs.readdirSync(baseDir)
     .filter (f) ->
       f.endsWith('.coffee') and f isnt 'index.coffee'
+    .sort (a, b) ->
+      return -1 if a is 'sqlite.coffee' and b isnt 'sqlite.coffee'
+      return 1 if b is 'sqlite.coffee' and a isnt 'sqlite.coffee'
+      a.localeCompare b
 
   for f in files
     modPath = path.join(baseDir, f)

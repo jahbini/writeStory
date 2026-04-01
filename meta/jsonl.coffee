@@ -19,7 +19,7 @@ module.exports = (M, opts={}) ->
       /\.jsonl$/i,
       (key, value) ->
         dest = path.join(baseDir, key)
-        if ! value
+        if value is undefined
           return readJSONL(dest)
         fs.mkdirSync(path.dirname(dest),{recursive:true})
         fs.writeFileSync(dest,'','utf8')

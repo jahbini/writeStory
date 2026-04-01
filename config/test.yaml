@@ -27,6 +27,8 @@ artifacts:
     target: tested/curl_result.json
   python_result:
     target: tested/python_result.json
+  sql_validation:
+    target: tested/sql_validation.json
 
 # ------------------------------------------------------------
 # Step 1 — generate input
@@ -94,3 +96,13 @@ test7_python:
   needs: [curl_result]
   makes: [python_result]
   desc: "Spawn a Python subprocess and capture output"
+
+# ------------------------------------------------------------
+# Step 8 — sqlite meta request-key validation
+# ------------------------------------------------------------
+test8_sqlite:
+  run: test/step8_sqlite.coffee
+  depends_on: [test7_python]
+  needs: [python_result]
+  makes: [sql_validation]
+  desc: "Validate sqlite-backed meta request keys and read projections"
