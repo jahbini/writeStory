@@ -8,7 +8,11 @@ run:
   debug_mlx: false
   debug_sql: false
 
-artifacts: {}
+artifacts:
+  stories_md:
+    source: data/jim.md
+  story_seed_ids:
+    target: out/story_seed_ids.json
 
 download_model:
   run: story/hf_download.coffee
@@ -28,3 +32,9 @@ quantize_model:
   mlx:
     q: null
     q-bits: 4
+
+seed_story_sqlite:
+  run: kag_oracle_ite/seed_story_sqlite.coffee
+  depends_on: [download_model]
+  needs: [stories_md]
+  makes: [story_seed_ids]

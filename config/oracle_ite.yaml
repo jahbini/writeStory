@@ -9,10 +9,8 @@ run:
   debug_sql: false
 
 artifacts:
-  stories_md:
-    source: data/jim.md
   story_seed_ids:
-    target: out/story_seed_ids.json
+    source: out/story_seed_ids.json
   new_story_ids:
     target: out/new_story_ids.json
   kag_rejects:
@@ -39,15 +37,9 @@ quantize_model:
     q: null
     q-bits: 4
 
-seed_story_sqlite:
-  run: kag_oracle_ite/seed_story_sqlite.coffee
-  depends_on: [download_model]
-  needs: [stories_md]
-  makes: [story_seed_ids]
-
 oracle_ask_sqlite:
   run: kag_oracle_ite/oracle_ask_sqlite.coffee
-  depends_on: [seed_story_sqlite, quantize_model]
+  depends_on: [quantize_model]
   needs: [story_seed_ids]
   makes: [new_story_ids, kag_rejects, kag_viewed]
   model_dir: build/model4
