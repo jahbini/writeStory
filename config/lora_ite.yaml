@@ -45,7 +45,6 @@ run_lora_train_ite:
   test_only: false
   adapter_path: build/adapter
   resume_adapter_file: build/adapter/adapters.safetensors
-  model_memo_key: modelDir
   mlx:
     batch-size: 1
     iters: 200
