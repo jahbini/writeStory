@@ -31,6 +31,7 @@ cleanGeneratedText = (prompt, rawOutput) ->
     storyFragment = S.param 'story_fragment', null
     promptKey = S.param 'prompt_key', null
     promptText = S.param 'prompt_text', null
+    rawOutputKey = S.param 'raw_output_key', null
     modelMemoKey = S.param 'model_memo_key', 'modelDir'
     explicitModelDir = S.param 'model_dir', null
 
@@ -85,6 +86,7 @@ cleanGeneratedText = (prompt, rawOutput) ->
       source_story: story
 
     S.saveThis "story_polished", out
+    S.make rawOutputKey, String(rawOutput ? '') if rawOutputKey?
     S.make 'story_text', polishedText
     S.done()
     return

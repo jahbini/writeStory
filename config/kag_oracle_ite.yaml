@@ -21,6 +21,8 @@ artifacts:
     target: out/viewed.jsonl
   kag_segments:
     target: out/kag_segments.jsonl
+  story_generate_raw:
+    target: out/story_generate_raw.txt
   story_text:
     target: out/story.txt
 
@@ -92,8 +94,9 @@ talk_story:
   run: train_markdown/polish_story.coffee
   depends_on: [prepare_kag_segments_sqlite]
   needs: []
-  makes: [story_text]
+  makes: [story_text, story_generate_raw]
   model_dir: build/model4
+  raw_output_key: story_generate_raw
   story_fragment: A quiet ordinary day turns into a memorable Jim story.
   prompt_text: |
     Write a new Jim story in first person.

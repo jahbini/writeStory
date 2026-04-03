@@ -28,6 +28,20 @@ safe = (title) ->
   desc: "Seed storyByID sqlite records from markdown stories"
 
   action: (S) ->
+    existingStories = S.theLowdown('allStories.jsonl')?.value
+    throw new Error "[#{S.stepName}] allStories.jsonl must be an array" unless Array.isArray existingStories
+
+    if existingStories.length > 0
+      storyIDs = []
+      for story in existingStories
+        storyID = story?.story_id
+        continue unless storyID?
+        storyIDs.push storyID
+      console.log "[seed_story_sqlite] sqlite already seeded, stories:", storyIDs.length
+      S.make 'story_seed_ids', storyIDs
+      S.done()
+      return
+
     raw = await S.need 'stories_md'
     throw new Error "[#{S.stepName}] stories_md must be a string artifact" unless typeof raw is 'string'
 

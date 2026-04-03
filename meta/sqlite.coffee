@@ -36,6 +36,15 @@ module.exports = (M, opts={}) ->
       realization TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS expanded_story_parts (
+      story_id TEXT PRIMARY KEY,
+      scene_json TEXT,
+      arrival_json TEXT,
+      disturbance_json TEXT,
+      reflection_json TEXT,
+      realization_json TEXT
+    );
+
     CREATE TABLE IF NOT EXISTS kag_entries (
       story_id TEXT NOT NULL,
       entry_index INTEGER NOT NULL,
@@ -52,6 +61,11 @@ module.exports = (M, opts={}) ->
 
     CREATE INDEX IF NOT EXISTS idx_kag_entries_keyword
       ON kag_entries (keyword);
+
+    CREATE TABLE IF NOT EXISTS lora_trained_stories (
+      story_id TEXT PRIMARY KEY,
+      trained_at TEXT
+    );
     """
 
     FORMATTERS =
@@ -303,6 +317,64 @@ module.exports = (M, opts={}) ->
       }
 
       {
+        name: 'expandedPartsFor'
+        regex: /^expandedPartsFor\{([^}]+)\}$/
+        allowedSuffixes: ['json', 'txt', 'csv']
+        read: (db, storyID) ->
+          row = db.prepare("""
+            SELECT story_id, scene_json, arrival_json, disturbance_json, reflection_json, realization_json
+            FROM expanded_story_parts
+            WHERE story_id = ?
+          """).get(storyID)
+
+          throw new Error "sqlite meta missing expandedPartsFor #{storyID}" unless row?
+
+          parsePart = (raw) ->
+            return null unless raw?
+            JSON.parse raw
+
+          {
+            story_id: row.story_id
+            expanded_parts:
+              scene: parsePart row.scene_json
+              arrival: parsePart row.arrival_json
+              disturbance: parsePart row.disturbance_json
+              reflection: parsePart row.reflection_json
+              realization: parsePart row.realization_json
+          }
+        write: (db, value, storyID) ->
+          throw new Error "sqlite meta expandedPartsFor write expects object" unless value? and typeof value is 'object' and not Array.isArray(value)
+          throw new Error "sqlite meta expandedPartsFor write expects expanded_parts" unless value.expanded_parts? and typeof value.expanded_parts is 'object' and not Array.isArray(value.expanded_parts)
+          writeStoryID = value.story_id ? storyID
+          throw new Error "sqlite meta expandedPartsFor story_id mismatch" unless writeStoryID is storyID
+
+          db.prepare("""
+            INSERT INTO expanded_story_parts (
+              story_id, scene_json, arrival_json, disturbance_json, reflection_json, realization_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(story_id) DO UPDATE SET
+              scene_json = excluded.scene_json,
+              arrival_json = excluded.arrival_json,
+              disturbance_json = excluded.disturbance_json,
+              reflection_json = excluded.reflection_json,
+              realization_json = excluded.realization_json
+          """).run(
+            writeStoryID
+            JSON.stringify(value.expanded_parts.scene ? null)
+            JSON.stringify(value.expanded_parts.arrival ? null)
+            JSON.stringify(value.expanded_parts.disturbance ? null)
+            JSON.stringify(value.expanded_parts.reflection ? null)
+            JSON.stringify(value.expanded_parts.realization ? null)
+          )
+
+          {
+            story_id: writeStoryID
+            expanded_parts: value.expanded_parts
+          }
+      }
+
+      {
         name: 'storiesWithKag'
         regex: /^storiesWithKag\{([^}]+)\}$/
         allowedSuffixes: ['jsonl', 'txt', 'csv']
@@ -335,10 +407,73 @@ module.exports = (M, opts={}) ->
           """).all()
         write: null
       }
+
+      {
+        name: 'allStories'
+        regex: /^allStories$/
+        allowedSuffixes: ['jsonl', 'txt', 'csv']
+        read: (db) ->
+          db.prepare("""
+            SELECT story_id, title, text
+            FROM stories
+            ORDER BY story_id ASC
+          """).all()
+        write: null
+      }
+
+      {
+        name: 'trainedStories'
+        regex: /^trainedStories$/
+        allowedSuffixes: ['jsonl', 'txt', 'csv']
+        read: (db) ->
+          db.prepare("""
+            SELECT story_id, trained_at
+            FROM lora_trained_stories
+            ORDER BY story_id ASC
+          """).all()
+        write: (db, value) ->
+          throw new Error "sqlite meta trainedStories write expects array" unless Array.isArray(value)
+
+          db.exec 'BEGIN'
+          try
+            db.exec "DELETE FROM lora_trained_stories"
+
+            insertStatement = db.prepare("""
+              INSERT INTO lora_trained_stories (story_id, trained_at)
+              VALUES (?, ?)
+            """)
+
+            for row in value
+              if typeof row is 'string'
+                storyID = row
+                trainedAt = null
+              else
+                throw new Error "sqlite meta trainedStories write expects objects or strings" unless row? and typeof row is 'object' and not Array.isArray(row)
+                storyID = row.story_id
+                trainedAt = row.trained_at ? null
+
+              throw new Error "sqlite meta trainedStories write missing story_id" unless storyID?
+              insertStatement.run storyID, trainedAt
+
+            db.exec 'COMMIT'
+          catch err
+            try db.exec 'ROLLBACK' catch then null
+            throw err
+
+          rows = []
+          for row in value
+            if typeof row is 'string'
+              rows.push story_id: row, trained_at: null
+            else
+              rows.push
+                story_id: row.story_id
+                trained_at: row.trained_at ? null
+          rows
+      }
     ]
 
     M.addMetaRule "sqlite",
-      /\.(json|jsonl|txt|csv)$/i,
+      /^(?:storyByID\{[^}]+\}|partsFor\{[^}]+\}|kagFor\{[^}]+\}|expandedPartsFor\{[^}]+\}|storiesWithKag\{[^}]+\}|storiesMissingKag|allStories|trainedStories)\.(json|jsonl|txt|csv)$/i,
       (key, value) ->
         debugLog "meta key", key, "write?", value isnt undefined
 
