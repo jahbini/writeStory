@@ -18,6 +18,19 @@
       else if runEntry?.notifier?
         runRecord = await runEntry.notifier
 
+    if not (runRecord? and typeof runRecord is 'object' and not Array.isArray(runRecord))
+      experiment = M.theLowdown('experiment.yaml')?.value ? {}
+      runRecordTarget = experiment?.artifacts?.lora_run_record?.target
+      if typeof runRecordTarget is 'string'
+        targetEntry = M.theLowdown runRecordTarget
+        targetValue = targetEntry?.value
+        if targetValue is undefined
+          if typeof targetEntry?.waitFor is 'function'
+            targetValue = await targetEntry.waitFor()
+          else if targetEntry?.notifier?
+            targetValue = await targetEntry.notifier
+        runRecord = targetValue if targetValue? and typeof targetValue is 'object' and not Array.isArray(targetValue)
+
     throw new Error "[#{stepName}] selected_story_ids must be an array" unless Array.isArray selectedStoryIDs
     throw new Error "[#{stepName}] lora_run_record must be an object" unless runRecord? and typeof runRecord is 'object' and not Array.isArray(runRecord)
     throw new Error "[#{stepName}] lora_run_record missing run_id" unless runRecord.run_id?
