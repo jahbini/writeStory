@@ -74,6 +74,35 @@ CREATE INDEX IF NOT EXISTS idx_kag_entries_keyword
 CREATE TABLE IF NOT EXISTS lora_trained_stories (
   story_id TEXT PRIMARY KEY,
   trained_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS lora_story_usage (
+  story_id TEXT PRIMARY KEY,
+  use_count INTEGER NOT NULL DEFAULT 0,
+  last_trained_at TEXT,
+  last_run_id TEXT
+);
+
+CREATE TABLE IF NOT EXISTS lora_training_runs (
+  run_id TEXT PRIMARY KEY,
+  started_at TEXT,
+  finished_at TEXT,
+  status TEXT,
+  model_dir TEXT,
+  adapter_path TEXT,
+  resume_adapter_file TEXT,
+  training_dir TEXT,
+  stdout_text TEXT,
+  train_rows_count INTEGER,
+  valid_rows_count INTEGER,
+  test_rows_count INTEGER,
+  checkpoint_path TEXT
+);
+
+CREATE TABLE IF NOT EXISTS lora_training_run_stories (
+  run_id TEXT NOT NULL,
+  story_id TEXT NOT NULL,
+  PRIMARY KEY (run_id, story_id)
 );`);
     FORMATTERS = {
       json: {
@@ -613,9 +642,253 @@ VALUES (?, ?)`);
           }
           return rows;
         }
+      },
+      {
+        name: 'loraStoryUsage',
+        regex: /^loraStoryUsage$/,
+        allowedSuffixes: ['jsonl',
+      'txt',
+      'csv'],
+        read: function(db) {
+          return db.prepare(`SELECT
+  stories.story_id,
+  stories.title,
+  COALESCE(lora_story_usage.use_count, 0) AS use_count,
+  lora_story_usage.last_trained_at,
+  lora_story_usage.last_run_id
+FROM stories
+LEFT JOIN lora_story_usage
+  ON lora_story_usage.story_id = stories.story_id
+ORDER BY COALESCE(lora_story_usage.use_count, 0) ASC, stories.story_id ASC`).all();
+        },
+        write: null
+      },
+      {
+        name: 'loraTrainingRun',
+        regex: /^loraTrainingRun\{([^}]+)\}$/,
+        allowedSuffixes: ['json',
+      'txt',
+      'csv'],
+        read: function(db,
+      runID) {
+          var row,
+      storyRow,
+      storyRows;
+          row = db.prepare(`SELECT
+  run_id,
+  started_at,
+  finished_at,
+  status,
+  model_dir,
+  adapter_path,
+  resume_adapter_file,
+  training_dir,
+  stdout_text,
+  train_rows_count,
+  valid_rows_count,
+  test_rows_count,
+  checkpoint_path
+FROM lora_training_runs
+WHERE run_id = ?`).get(runID);
+          if (row == null) {
+            throw new Error(`sqlite meta missing loraTrainingRun ${runID}`);
+          }
+          storyRows = db.prepare(`SELECT story_id
+FROM lora_training_run_stories
+WHERE run_id = ?
+ORDER BY story_id ASC`).all(runID);
+          return {
+            run_id: row.run_id,
+            started_at: row.started_at,
+            finished_at: row.finished_at,
+            status: row.status,
+            model_dir: row.model_dir,
+            adapter_path: row.adapter_path,
+            resume_adapter_file: row.resume_adapter_file,
+            training_dir: row.training_dir,
+            stdout_text: row.stdout_text,
+            train_rows_count: row.train_rows_count,
+            valid_rows_count: row.valid_rows_count,
+            test_rows_count: row.test_rows_count,
+            checkpoint_path: row.checkpoint_path,
+            story_ids: (function() {
+              var i,
+      len,
+      results;
+              results = [];
+              for (i = 0, len = storyRows.length; i < len; i++) {
+                storyRow = storyRows[i];
+                results.push(storyRow.story_id);
+              }
+              return results;
+            })()
+          };
+        },
+        write: function(db,
+      value,
+      runID) {
+          var adapterPath,
+      checkpointPath,
+      err,
+      finishedAt,
+      i,
+      insertStory,
+      len,
+      modelDir,
+      ref10,
+      ref11,
+      ref12,
+      ref13,
+      ref14,
+      ref15,
+      ref2,
+      ref3,
+      ref4,
+      ref5,
+      ref6,
+      ref7,
+      ref8,
+      ref9,
+      resumeAdapterFile,
+      startedAt,
+      status,
+      stdoutText,
+      storyID,
+      testRowsCount,
+      trainRowsCount,
+      trainingDir,
+      validRowsCount,
+      writeRunID;
+          if (!((value != null) && typeof value === 'object' && !Array.isArray(value))) {
+            throw new Error("sqlite meta loraTrainingRun write expects object");
+          }
+          writeRunID = (ref2 = value.run_id) != null ? ref2 : runID;
+          if (writeRunID !== runID) {
+            throw new Error("sqlite meta loraTrainingRun run_id mismatch");
+          }
+          if (!Array.isArray(value.story_ids)) {
+            throw new Error("sqlite meta loraTrainingRun write expects story_ids array");
+          }
+          startedAt = (ref3 = value.started_at) != null ? ref3 : null;
+          finishedAt = (ref4 = value.finished_at) != null ? ref4 : null;
+          status = (ref5 = value.status) != null ? ref5 : null;
+          modelDir = (ref6 = value.model_dir) != null ? ref6 : null;
+          adapterPath = (ref7 = value.adapter_path) != null ? ref7 : null;
+          resumeAdapterFile = (ref8 = value.resume_adapter_file) != null ? ref8 : null;
+          trainingDir = (ref9 = value.training_dir) != null ? ref9 : null;
+          stdoutText = (ref10 = value.stdout_text) != null ? ref10 : null;
+          trainRowsCount = (ref11 = value.train_rows_count) != null ? ref11 : null;
+          validRowsCount = (ref12 = value.valid_rows_count) != null ? ref12 : null;
+          testRowsCount = (ref13 = value.test_rows_count) != null ? ref13 : null;
+          checkpointPath = (ref14 = value.checkpoint_path) != null ? ref14 : null;
+          db.exec('BEGIN');
+          try {
+            db.prepare(`INSERT INTO lora_training_runs (
+  run_id, started_at, finished_at, status, model_dir, adapter_path,
+  resume_adapter_file, training_dir, stdout_text, train_rows_count,
+  valid_rows_count, test_rows_count, checkpoint_path
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(run_id) DO UPDATE SET
+  started_at = excluded.started_at,
+  finished_at = excluded.finished_at,
+  status = excluded.status,
+  model_dir = excluded.model_dir,
+  adapter_path = excluded.adapter_path,
+  resume_adapter_file = excluded.resume_adapter_file,
+  training_dir = excluded.training_dir,
+  stdout_text = excluded.stdout_text,
+  train_rows_count = excluded.train_rows_count,
+  valid_rows_count = excluded.valid_rows_count,
+  test_rows_count = excluded.test_rows_count,
+  checkpoint_path = excluded.checkpoint_path`).run(writeRunID,
+      startedAt,
+      finishedAt,
+      status,
+      modelDir,
+      adapterPath,
+      resumeAdapterFile,
+      trainingDir,
+      stdoutText,
+      trainRowsCount,
+      validRowsCount,
+      testRowsCount,
+      checkpointPath);
+            db.prepare(`DELETE FROM lora_training_run_stories
+WHERE run_id = ?`).run(writeRunID);
+            insertStory = db.prepare(`INSERT INTO lora_training_run_stories (run_id, story_id)
+VALUES (?, ?)`);
+            ref15 = value.story_ids;
+            for (i = 0, len = ref15.length; i < len; i++) {
+              storyID = ref15[i];
+              if (storyID == null) {
+                throw new Error("sqlite meta loraTrainingRun story_ids contain empty value");
+              }
+              insertStory.run(writeRunID,
+      storyID);
+              db.prepare(`INSERT INTO lora_story_usage (story_id, use_count, last_trained_at, last_run_id)
+VALUES (?, 1, ?, ?)
+ON CONFLICT(story_id) DO UPDATE SET
+  use_count = lora_story_usage.use_count + 1,
+  last_trained_at = excluded.last_trained_at,
+  last_run_id = excluded.last_run_id`).run(storyID,
+      finishedAt != null ? finishedAt : startedAt,
+      writeRunID);
+            }
+            db.exec('COMMIT');
+          } catch (error) {
+            err = error;
+            try {
+              db.exec('ROLLBACK');
+            } catch (error) {
+              null;
+            }
+            throw err;
+          }
+          return {
+            run_id: writeRunID,
+            started_at: startedAt,
+            finished_at: finishedAt,
+            status: status,
+            model_dir: modelDir,
+            adapter_path: adapterPath,
+            resume_adapter_file: resumeAdapterFile,
+            training_dir: trainingDir,
+            stdout_text: stdoutText,
+            train_rows_count: trainRowsCount,
+            valid_rows_count: validRowsCount,
+            test_rows_count: testRowsCount,
+            checkpoint_path: checkpointPath,
+            story_ids: value.story_ids
+          };
+        }
+      },
+      {
+        name: 'loraTrainingRuns',
+        regex: /^loraTrainingRuns$/,
+        allowedSuffixes: ['jsonl',
+      'txt',
+      'csv'],
+        read: function(db) {
+          return db.prepare(`SELECT
+  run_id,
+  started_at,
+  finished_at,
+  status,
+  model_dir,
+  adapter_path,
+  training_dir,
+  train_rows_count,
+  valid_rows_count,
+  test_rows_count,
+  checkpoint_path
+FROM lora_training_runs
+ORDER BY started_at DESC, run_id DESC`).all();
+        },
+        write: null
       }
     ];
-    return M.addMetaRule("sqlite", /^(?:storyByID\{[^}]+\}|partsFor\{[^}]+\}|kagFor\{[^}]+\}|expandedPartsFor\{[^}]+\}|storiesWithKag\{[^}]+\}|storiesMissingKag|allStories|trainedStories)\.(json|jsonl|txt|csv)$/i, function(key, value) {
+    return M.addMetaRule("sqlite", /^(?:storyByID\{[^}]+\}|partsFor\{[^}]+\}|kagFor\{[^}]+\}|expandedPartsFor\{[^}]+\}|storiesWithKag\{[^}]+\}|storiesMissingKag|allStories|trainedStories|loraStoryUsage|loraTrainingRun\{[^}]+\}|loraTrainingRuns)\.(json|jsonl|txt|csv)$/i, function(key, value) {
       var decoded, formatter, i, len, match, matchedArgs, matchedRequest, request, requestKey, result, suffix, suffixMatch;
       debugLog("meta key", key, "write?", value !== void 0);
       suffixMatch = key.match(/\.([A-Za-z0-9]+)$/);

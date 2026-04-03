@@ -1,0 +1,73 @@
+run:
+  model: Qwen/Qwen3-4B-Instruct-2507
+  output_dir: out
+  data_dir: data
+  training_dir: build/train
+  loraLand: build/model
+  debug_s: false
+  debug_mlx: false
+  debug_sql: false
+
+artifacts:
+  selected_story_id:
+    target: out/selected_story_id.json
+  diary_events:
+    target: out/diary_events.json
+  diary_kag:
+    target: out/diary_kag.json
+  diary_prompt_text:
+    target: out/diary_prompt.txt
+  diary_adapted_raw:
+    target: out/diary_adapted_raw.txt
+  diary_base_raw:
+    target: out/diary_base_raw.txt
+  diary_adapted_meta:
+    target: out/diary_adapted_meta.json
+  diary_base_meta:
+    target: out/diary_base_meta.json
+  diary_adapted_text:
+    target: out/diary_adapted.txt
+  diary_base_text:
+    target: out/diary_base.txt
+
+select_diary_events_ite:
+  run: diary_ite/select_diary_events_ite.coffee
+  depends_on: []
+  needs: []
+  makes: [selected_story_id, diary_events]
+  story_id: sql_test_with_kag
+
+collect_diary_kag_ite:
+  run: diary_ite/collect_diary_kag_ite.coffee
+  depends_on: [select_diary_events_ite]
+  needs: [selected_story_id, diary_events]
+  makes: [diary_kag]
+
+build_diary_prompt_ite:
+  run: diary_ite/build_diary_prompt_ite.coffee
+  depends_on: [collect_diary_kag_ite]
+  needs: [selected_story_id, diary_events, diary_kag]
+  makes: [diary_prompt_text]
+
+generate_diary_with_adapter_ite:
+  run: diary_ite/generate_diary_with_adapter_ite.coffee
+  depends_on: [build_diary_prompt_ite]
+  needs: [selected_story_id, diary_prompt_text]
+  makes: [diary_adapted_raw, diary_adapted_meta, diary_adapted_text]
+  adapter_path: build/adapter
+  model_memo_key: modelDir
+  mlx:
+    max-tokens: 2000
+    temp: 0.7
+    min-tokens: 500
+
+generate_diary_without_adapter_ite:
+  run: diary_ite/generate_diary_without_adapter_ite.coffee
+  depends_on: [build_diary_prompt_ite]
+  needs: [selected_story_id, diary_prompt_text]
+  makes: [diary_base_raw, diary_base_meta, diary_base_text]
+  model_memo_key: modelDir
+  mlx:
+    max-tokens: 2000
+    temp: 0.7
+    min-tokens: 500

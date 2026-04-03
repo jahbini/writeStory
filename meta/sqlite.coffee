@@ -66,6 +66,35 @@ module.exports = (M, opts={}) ->
       story_id TEXT PRIMARY KEY,
       trained_at TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS lora_story_usage (
+      story_id TEXT PRIMARY KEY,
+      use_count INTEGER NOT NULL DEFAULT 0,
+      last_trained_at TEXT,
+      last_run_id TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS lora_training_runs (
+      run_id TEXT PRIMARY KEY,
+      started_at TEXT,
+      finished_at TEXT,
+      status TEXT,
+      model_dir TEXT,
+      adapter_path TEXT,
+      resume_adapter_file TEXT,
+      training_dir TEXT,
+      stdout_text TEXT,
+      train_rows_count INTEGER,
+      valid_rows_count INTEGER,
+      test_rows_count INTEGER,
+      checkpoint_path TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS lora_training_run_stories (
+      run_id TEXT NOT NULL,
+      story_id TEXT NOT NULL,
+      PRIMARY KEY (run_id, story_id)
+    );
     """
 
     FORMATTERS =
@@ -470,10 +499,206 @@ module.exports = (M, opts={}) ->
                 trained_at: row.trained_at ? null
           rows
       }
+
+      {
+        name: 'loraStoryUsage'
+        regex: /^loraStoryUsage$/
+        allowedSuffixes: ['jsonl', 'txt', 'csv']
+        read: (db) ->
+          db.prepare("""
+            SELECT
+              stories.story_id,
+              stories.title,
+              COALESCE(lora_story_usage.use_count, 0) AS use_count,
+              lora_story_usage.last_trained_at,
+              lora_story_usage.last_run_id
+            FROM stories
+            LEFT JOIN lora_story_usage
+              ON lora_story_usage.story_id = stories.story_id
+            ORDER BY COALESCE(lora_story_usage.use_count, 0) ASC, stories.story_id ASC
+          """).all()
+        write: null
+      }
+
+      {
+        name: 'loraTrainingRun'
+        regex: /^loraTrainingRun\{([^}]+)\}$/
+        allowedSuffixes: ['json', 'txt', 'csv']
+        read: (db, runID) ->
+          row = db.prepare("""
+            SELECT
+              run_id,
+              started_at,
+              finished_at,
+              status,
+              model_dir,
+              adapter_path,
+              resume_adapter_file,
+              training_dir,
+              stdout_text,
+              train_rows_count,
+              valid_rows_count,
+              test_rows_count,
+              checkpoint_path
+            FROM lora_training_runs
+            WHERE run_id = ?
+          """).get(runID)
+
+          throw new Error "sqlite meta missing loraTrainingRun #{runID}" unless row?
+
+          storyRows = db.prepare("""
+            SELECT story_id
+            FROM lora_training_run_stories
+            WHERE run_id = ?
+            ORDER BY story_id ASC
+          """).all(runID)
+
+          {
+            run_id: row.run_id
+            started_at: row.started_at
+            finished_at: row.finished_at
+            status: row.status
+            model_dir: row.model_dir
+            adapter_path: row.adapter_path
+            resume_adapter_file: row.resume_adapter_file
+            training_dir: row.training_dir
+            stdout_text: row.stdout_text
+            train_rows_count: row.train_rows_count
+            valid_rows_count: row.valid_rows_count
+            test_rows_count: row.test_rows_count
+            checkpoint_path: row.checkpoint_path
+            story_ids: (storyRow.story_id for storyRow in storyRows)
+          }
+        write: (db, value, runID) ->
+          throw new Error "sqlite meta loraTrainingRun write expects object" unless value? and typeof value is 'object' and not Array.isArray(value)
+          writeRunID = value.run_id ? runID
+          throw new Error "sqlite meta loraTrainingRun run_id mismatch" unless writeRunID is runID
+          throw new Error "sqlite meta loraTrainingRun write expects story_ids array" unless Array.isArray(value.story_ids)
+
+          startedAt = value.started_at ? null
+          finishedAt = value.finished_at ? null
+          status = value.status ? null
+          modelDir = value.model_dir ? null
+          adapterPath = value.adapter_path ? null
+          resumeAdapterFile = value.resume_adapter_file ? null
+          trainingDir = value.training_dir ? null
+          stdoutText = value.stdout_text ? null
+          trainRowsCount = value.train_rows_count ? null
+          validRowsCount = value.valid_rows_count ? null
+          testRowsCount = value.test_rows_count ? null
+          checkpointPath = value.checkpoint_path ? null
+
+          db.exec 'BEGIN'
+          try
+            db.prepare("""
+              INSERT INTO lora_training_runs (
+                run_id, started_at, finished_at, status, model_dir, adapter_path,
+                resume_adapter_file, training_dir, stdout_text, train_rows_count,
+                valid_rows_count, test_rows_count, checkpoint_path
+              )
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              ON CONFLICT(run_id) DO UPDATE SET
+                started_at = excluded.started_at,
+                finished_at = excluded.finished_at,
+                status = excluded.status,
+                model_dir = excluded.model_dir,
+                adapter_path = excluded.adapter_path,
+                resume_adapter_file = excluded.resume_adapter_file,
+                training_dir = excluded.training_dir,
+                stdout_text = excluded.stdout_text,
+                train_rows_count = excluded.train_rows_count,
+                valid_rows_count = excluded.valid_rows_count,
+                test_rows_count = excluded.test_rows_count,
+                checkpoint_path = excluded.checkpoint_path
+            """).run(
+              writeRunID
+              startedAt
+              finishedAt
+              status
+              modelDir
+              adapterPath
+              resumeAdapterFile
+              trainingDir
+              stdoutText
+              trainRowsCount
+              validRowsCount
+              testRowsCount
+              checkpointPath
+            )
+
+            db.prepare("""
+              DELETE FROM lora_training_run_stories
+              WHERE run_id = ?
+            """).run(writeRunID)
+
+            insertStory = db.prepare("""
+              INSERT INTO lora_training_run_stories (run_id, story_id)
+              VALUES (?, ?)
+            """)
+
+            for storyID in value.story_ids
+              throw new Error "sqlite meta loraTrainingRun story_ids contain empty value" unless storyID?
+              insertStory.run writeRunID, storyID
+
+              db.prepare("""
+                INSERT INTO lora_story_usage (story_id, use_count, last_trained_at, last_run_id)
+                VALUES (?, 1, ?, ?)
+                ON CONFLICT(story_id) DO UPDATE SET
+                  use_count = lora_story_usage.use_count + 1,
+                  last_trained_at = excluded.last_trained_at,
+                  last_run_id = excluded.last_run_id
+              """).run(storyID, finishedAt ? startedAt, writeRunID)
+
+            db.exec 'COMMIT'
+          catch err
+            try db.exec 'ROLLBACK' catch then null
+            throw err
+
+          {
+            run_id: writeRunID
+            started_at: startedAt
+            finished_at: finishedAt
+            status: status
+            model_dir: modelDir
+            adapter_path: adapterPath
+            resume_adapter_file: resumeAdapterFile
+            training_dir: trainingDir
+            stdout_text: stdoutText
+            train_rows_count: trainRowsCount
+            valid_rows_count: validRowsCount
+            test_rows_count: testRowsCount
+            checkpoint_path: checkpointPath
+            story_ids: value.story_ids
+          }
+      }
+
+      {
+        name: 'loraTrainingRuns'
+        regex: /^loraTrainingRuns$/
+        allowedSuffixes: ['jsonl', 'txt', 'csv']
+        read: (db) ->
+          db.prepare("""
+            SELECT
+              run_id,
+              started_at,
+              finished_at,
+              status,
+              model_dir,
+              adapter_path,
+              training_dir,
+              train_rows_count,
+              valid_rows_count,
+              test_rows_count,
+              checkpoint_path
+            FROM lora_training_runs
+            ORDER BY started_at DESC, run_id DESC
+          """).all()
+        write: null
+      }
     ]
 
     M.addMetaRule "sqlite",
-      /^(?:storyByID\{[^}]+\}|partsFor\{[^}]+\}|kagFor\{[^}]+\}|expandedPartsFor\{[^}]+\}|storiesWithKag\{[^}]+\}|storiesMissingKag|allStories|trainedStories)\.(json|jsonl|txt|csv)$/i,
+      /^(?:storyByID\{[^}]+\}|partsFor\{[^}]+\}|kagFor\{[^}]+\}|expandedPartsFor\{[^}]+\}|storiesWithKag\{[^}]+\}|storiesMissingKag|allStories|trainedStories|loraStoryUsage|loraTrainingRun\{[^}]+\}|loraTrainingRuns)\.(json|jsonl|txt|csv)$/i,
       (key, value) ->
         debugLog "meta key", key, "write?", value isnt undefined
 
