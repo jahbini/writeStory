@@ -17,49 +17,72 @@ renderKagEntry = (entry) ->
   return "- #{keyword}" if keyword.length
   "- unlabelled KAG cue"
 
+coerceJSON = (value) ->
+  return value unless typeof value is 'string'
+  try
+    JSON.parse value
+  catch
+    value
+
+normalizeDiaryKag = (value) ->
+  value = coerceJSON value
+  return value if Array.isArray(value?.entries)
+
+  if value? and typeof value is 'object' and not Array.isArray(value)
+    if Array.isArray(value.value?.entries)
+      return value.value
+    if typeof value.entries is 'string'
+      parsedEntries = coerceJSON value.entries
+      if Array.isArray(parsedEntries)
+        out = Object.assign {}, value
+        out.entries = parsedEntries
+        return out
+
+  value
+
+readArtifactTarget = (L, artifactKey) ->
+  experiment = L.theLowdown('experiment.yaml')?.value ? {}
+  targetKey = experiment?.artifacts?[artifactKey]?.target
+  return undefined unless typeof targetKey is 'string'
+
+  targetEntry = L.theLowdown targetKey
+  targetValue = targetEntry?.value
+  if targetValue is undefined
+    if typeof targetEntry?.waitFor is 'function'
+      targetValue = await targetEntry.waitFor()
+    else if targetEntry?.notifier?
+      targetValue = await targetEntry.notifier
+  targetValue
+
 @step =
   desc: "Build the final diary prompt from diary events and matched KAG"
 
-  action: (M, stepName) ->
-    storyIDEntry = M.theLowdown 'selected_story_id'
-    storyID = storyIDEntry?.value
-    if storyID is undefined
-      if typeof storyIDEntry?.waitFor is 'function'
-        storyID = await storyIDEntry.waitFor()
-      else if storyIDEntry?.notifier?
-        storyID = await storyIDEntry.notifier
+  action: (L) ->
+    storyParts = await L.need 'story_parts'
+    diaryKag = await L.need 'diary_kag'
+    storyParts = coerceJSON storyParts
+    diaryKag = normalizeDiaryKag diaryKag
 
-    eventsEntry = M.theLowdown 'diary_events'
-    diaryEvents = eventsEntry?.value
-    if diaryEvents is undefined
-      if typeof eventsEntry?.waitFor is 'function'
-        diaryEvents = await eventsEntry.waitFor()
-      else if eventsEntry?.notifier?
-        diaryEvents = await eventsEntry.notifier
+    unless storyParts? and typeof storyParts is 'object' and not Array.isArray(storyParts)
+      storyParts = await readArtifactTarget L, 'story_parts'
+      storyParts = coerceJSON storyParts
 
-    kagEntry = M.theLowdown 'diary_kag'
-    diaryKag = kagEntry?.value
-    if diaryKag is undefined
-      if typeof kagEntry?.waitFor is 'function'
-        diaryKag = await kagEntry.waitFor()
-      else if kagEntry?.notifier?
-        diaryKag = await kagEntry.notifier
+    unless Array.isArray(diaryKag?.entries)
+      diaryKag = await readArtifactTarget L, 'diary_kag'
+      diaryKag = normalizeDiaryKag diaryKag
 
-    storyEntry = M.theLowdown "storyByID{#{storyID}}.json"
-    story = storyEntry?.value
-    if story is undefined
-      if typeof storyEntry?.waitFor is 'function'
-        story = await storyEntry.waitFor()
-      else if storyEntry?.notifier?
-        story = await storyEntry.notifier
+    throw new Error "[#{L.stepName}] story_parts must be an object" unless storyParts? and typeof storyParts is 'object' and not Array.isArray(storyParts)
+    throw new Error "[#{L.stepName}] diary_kag must be an object" unless Array.isArray(diaryKag?.entries)
 
-    throw new Error "[#{stepName}] selected_story_id must be a string" unless typeof storyID is 'string'
-    throw new Error "[#{stepName}] diary_events must be an object" unless Array.isArray(diaryEvents?.events)
-    throw new Error "[#{stepName}] diary_kag must be an object" unless Array.isArray(diaryKag?.entries)
-    throw new Error "[#{stepName}] Missing sqlite story #{storyID}" unless story?.text?
-
-    eventLines = (renderEvent(event) for event in diaryEvents.events when event?).filter(Boolean)
+    eventLines = []
+    eventLines.push renderEvent kind:'scene', text: storyParts.scene?.text, keyword: storyParts.scene?.location, headline: ''
+    eventLines.push renderEvent kind:'arrival', text: storyParts.arrival?.text, keyword: storyParts.arrival?.character, headline: ''
+    eventLines.push renderEvent kind:'disturbance', text: storyParts.disturbance?.text, keyword: storyParts.disturbance?.theme, headline: ''
+    eventLines.push renderEvent kind:'reflection', text: storyParts.reflection?.text, keyword: '', headline: ''
+    eventLines.push renderEvent kind:'realization', text: storyParts.realization?.text, keyword: '', headline: ''
+    eventLines = eventLines.filter(Boolean)
     kagLines = (renderKagEntry(entry) for entry in diaryKag.entries when entry?).filter(Boolean)
+    storyID = String(storyParts.story_id ? '').trim()
 
     prompt = [
       "You are writing in the narrative voice of Jim from St. John's."
@@ -75,23 +98,19 @@ renderKagEntry = (entry) ->
       "- Keep the voice observational, slightly humorous, and reflective"
       "- Return only the finished diary entry"
       ""
-      "Story source:"
-      "#{story.title ? storyID}"
+      "Diary story id:"
+      "#{storyID}"
       ""
       "Diary events:"
       if eventLines.length then eventLines.join("\n") else "- none"
       ""
       "KAG cues:"
       if kagLines.length then kagLines.join("\n") else "- none"
-      ""
-      "Source text for grounding:"
-      ""
-      "#{String(story.text ? '').trim()}"
     ].join "\n"
 
     console.log "[build_diary_prompt_ite] story:", storyID
     console.log "[build_diary_prompt_ite] prompt chars:", prompt.length
 
-    M.saveThis 'diary_prompt_text', prompt
-    M.saveThis "done:#{stepName}", true
+    L.make 'diary_prompt_text', prompt
+    L.done()
     return

@@ -36,54 +36,26 @@ hasAdapterConfig = (adapterPath) ->
 @step =
   desc: "Run MLX LoRA training using direct Memo access"
 
-  action: (M, stepName) ->
-    selectedEntry = M.theLowdown 'selected_story_ids'
-    selectedStoryIDs = selectedEntry?.value
-    if selectedStoryIDs is undefined
-      if typeof selectedEntry?.waitFor is 'function'
-        selectedStoryIDs = await selectedEntry.waitFor()
-      else if selectedEntry?.notifier?
-        selectedStoryIDs = await selectedEntry.notifier
+  action: (L) ->
+    selectedStoryIDs = await L.need 'selected_story_ids'
+    trainRows = await L.need 'train_rows'
+    validRows = await L.need 'valid_rows'
+    testRows = await L.need 'test_rows'
 
-    trainEntry = M.theLowdown 'train_rows'
-    trainRows = trainEntry?.value
-    if trainRows is undefined
-      if typeof trainEntry?.waitFor is 'function'
-        trainRows = await trainEntry.waitFor()
-      else if trainEntry?.notifier?
-        trainRows = await trainEntry.notifier
+    throw new Error "[#{L.stepName}] selected_story_ids must be an array" unless Array.isArray selectedStoryIDs
+    throw new Error "[#{L.stepName}] train_rows must be an array" unless Array.isArray trainRows
+    throw new Error "[#{L.stepName}] valid_rows must be an array" unless Array.isArray validRows
+    throw new Error "[#{L.stepName}] test_rows must be an array" unless Array.isArray testRows
 
-    validEntry = M.theLowdown 'valid_rows'
-    validRows = validEntry?.value
-    if validRows is undefined
-      if typeof validEntry?.waitFor is 'function'
-        validRows = await validEntry.waitFor()
-      else if validEntry?.notifier?
-        validRows = await validEntry.notifier
-
-    testEntry = M.theLowdown 'test_rows'
-    testRows = testEntry?.value
-    if testRows is undefined
-      if typeof testEntry?.waitFor is 'function'
-        testRows = await testEntry.waitFor()
-      else if testEntry?.notifier?
-        testRows = await testEntry.notifier
-
-    throw new Error "[#{stepName}] selected_story_ids must be an array" unless Array.isArray selectedStoryIDs
-    throw new Error "[#{stepName}] train_rows must be an array" unless Array.isArray trainRows
-    throw new Error "[#{stepName}] valid_rows must be an array" unless Array.isArray validRows
-    throw new Error "[#{stepName}] test_rows must be an array" unless Array.isArray testRows
-
-    testOnly = M.getStepParam(stepName, 'test_only')
-    testOnly = false if testOnly is undefined
-    adapterPath = M.getStepParam(stepName, 'adapter_path')
-    resumeFile = M.getStepParam(stepName, 'resume_adapter_file')
-    loraLand = M.getStepParam(stepName, 'loraLand')
-    trainingDir = M.getStepParam(stepName, 'training_dir')
+    testOnly = L.param 'test_only', false
+    adapterPath = L.param 'adapter_path'
+    resumeFile = L.param 'resume_adapter_file'
+    loraLand = L.param 'loraLand'
+    trainingDir = L.param 'training_dir'
     modelDir = loraLand
 
-    throw new Error "[#{stepName}] Missing model directory" unless modelDir?
-    throw new Error "[#{stepName}] Missing training_dir" unless trainingDir?
+    throw new Error "[#{L.stepName}] Missing model directory" unless modelDir?
+    throw new Error "[#{L.stepName}] Missing training_dir" unless trainingDir?
 
     actualResumeFile = resolveResumeFile adapterPath, resumeFile
     adapterConfigExists = hasAdapterConfig adapterPath
@@ -111,11 +83,7 @@ hasAdapterConfig = (adapterPath) ->
 
     startedAt = new Date().toISOString()
     runID = "lora-#{startedAt.replace(/[:.]/g, '-')}"
-
-    mlxDebug = M.getStepParam(stepName, 'debug_mlx')
-    mlxDebug = false if mlxDebug is undefined
-
-    stdoutText = M.callMLX 'lora', args, mlxDebug
+    stdoutText = L.callMLX 'lora', args
 
     finishedAt = new Date().toISOString()
     checkpointPath = detectCheckpointPath adapterPath
@@ -141,7 +109,7 @@ hasAdapterConfig = (adapterPath) ->
     console.log "[run_lora_train_ite] test rows:", testRows.length
     console.log "[run_lora_train_ite] run id:", runID
 
-    M.saveThis "loraTrainingRun{#{runID}}.json", runRecord
-    M.saveThis 'lora_stdout', stdoutText
-    M.saveThis "done:#{stepName}", true
+    L.saveThis "loraTrainingRun{#{runID}}.json", runRecord
+    L.make 'lora_stdout', stdoutText
+    L.done()
     return

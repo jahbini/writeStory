@@ -15,40 +15,50 @@ cleanGeneratedText = (prompt, rawOutput) ->
 
   lines.join("\n").trim()
 
+coerceJSON = (value) ->
+  return value unless typeof value is 'string'
+  try
+    JSON.parse value
+  catch
+    value
+
+readArtifactTarget = (L, artifactKey) ->
+  experiment = L.theLowdown('experiment.yaml')?.value ? {}
+  targetKey = experiment?.artifacts?[artifactKey]?.target
+  return undefined unless typeof targetKey is 'string'
+
+  targetEntry = L.theLowdown targetKey
+  targetValue = targetEntry?.value
+  if targetValue is undefined
+    if typeof targetEntry?.waitFor is 'function'
+      targetValue = await targetEntry.waitFor()
+    else if targetEntry?.notifier?
+      targetValue = await targetEntry.notifier
+  targetValue
+
 @step =
   desc: "Generate a diary entry without the adapter"
 
-  action: (M, stepName) ->
-    storyIDEntry = M.theLowdown 'selected_story_id'
-    storyID = storyIDEntry?.value
-    if storyID is undefined
-      if typeof storyIDEntry?.waitFor is 'function'
-        storyID = await storyIDEntry.waitFor()
-      else if storyIDEntry?.notifier?
-        storyID = await storyIDEntry.notifier
+  action: (L) ->
+    storyParts = await L.need 'story_parts'
+    prompt = await L.need 'diary_prompt_text'
+    storyParts = coerceJSON storyParts
 
-    promptEntry = M.theLowdown 'diary_prompt_text'
-    prompt = promptEntry?.value
-    if prompt is undefined
-      if typeof promptEntry?.waitFor is 'function'
-        prompt = await promptEntry.waitFor()
-      else if promptEntry?.notifier?
-        prompt = await promptEntry.notifier
+    unless storyParts? and typeof storyParts is 'object' and not Array.isArray(storyParts)
+      storyParts = await readArtifactTarget L, 'story_parts'
+      storyParts = coerceJSON storyParts
 
-    throw new Error "[#{stepName}] selected_story_id must be a string" unless typeof storyID is 'string'
-    throw new Error "[#{stepName}] diary_prompt_text must be a string" unless typeof prompt is 'string'
+    storyID = String(storyParts?.story_id ? '').trim()
+    throw new Error "[#{L.stepName}] story_parts must be an object" unless storyParts? and typeof storyParts is 'object' and not Array.isArray(storyParts)
+    throw new Error "[#{L.stepName}] diary_prompt_text must be a string" unless typeof prompt is 'string'
 
-    modelMemoKey = M.getStepParam(stepName, 'model_memo_key')
-    modelMemoKey = 'modelDir' if modelMemoKey is undefined
-    explicitModelDir = M.getStepParam(stepName, 'model_dir')
-    modelDir = explicitModelDir ? M.theLowdown(modelMemoKey)?.value ? M.theLowdown('modelDir')?.value
+    modelDir = L.param 'quantized_model_dir', null
 
-    throw new Error "[#{stepName}] Missing modelDir in memo" unless modelDir?
+    throw new Error "[#{L.stepName}] Missing quantized_model_dir param" unless modelDir?
 
-    rawOutput = M.callMLX 'generate',
+    rawOutput = L.callMLX 'generate',
       model: modelDir
       prompt: prompt
-    , M.getStepParam(stepName, 'debug_mlx') is true
 
     text = cleanGeneratedText prompt, rawOutput
     meta =
@@ -62,8 +72,8 @@ cleanGeneratedText = (prompt, rawOutput) ->
     console.log "[generate_diary_without_adapter_ite] story:", storyID
     console.log "[generate_diary_without_adapter_ite] text chars:", text.length
 
-    M.saveThis 'diary_base_raw', String(rawOutput ? '')
-    M.saveThis 'diary_base_meta', meta
-    M.saveThis 'diary_base_text', text
-    M.saveThis "done:#{stepName}", true
+    L.make 'diary_base_raw', String(rawOutput ? '')
+    L.make 'diary_base_meta', meta
+    L.make 'diary_base_text', text
+    L.done()
     return

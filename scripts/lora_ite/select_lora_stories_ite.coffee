@@ -1,10 +1,10 @@
 @step =
   desc: "Select a small SQLite-backed story batch for LoRA training"
 
-  action: (M, stepName) ->
-    batchSize = M.getStepParam(stepName, 'batch_size')
+  action: (L) ->
+    batchSize = L.param 'batch_size'
 
-    usageEntry = M.theLowdown 'loraStoryUsage.jsonl'
+    usageEntry = L.theLowdown 'loraStoryUsage.jsonl'
     usageRows = usageEntry?.value
     if usageRows is undefined
       if typeof usageEntry?.waitFor is 'function'
@@ -28,6 +28,6 @@
     for storyID, idx in selectedStoryIDs
       console.log "[select_lora_stories_ite] batch[#{idx}] #{storyID}"
 
-    M.saveThis 'selected_story_ids', selectedStoryIDs
-    M.saveThis "done:#{stepName}", true
+    L.make 'selected_story_ids', selectedStoryIDs
+    L.done()
     return

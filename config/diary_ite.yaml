@@ -9,10 +9,12 @@ run:
   debug_sql: false
 
 artifacts:
-  selected_story_id:
-    target: out/selected_story_id.json
-  diary_events:
-    target: out/diary_events.json
+  story_library:
+    target: out/story_library.json
+  story_recipe:
+    target: out/story_recipe.json
+  story_parts:
+    target: out/story_parts.json
   diary_kag:
     target: out/diary_kag.json
   diary_prompt_text:
@@ -30,32 +32,48 @@ artifacts:
   diary_base_text:
     target: out/diary_base.txt
 
-select_diary_events_ite:
-  run: diary_ite/select_diary_events_ite.coffee
+load_library:
+  run: story/load_library.coffee
   depends_on: []
   needs: []
-  makes: [selected_story_id, diary_events]
-  story_id: sql_test_with_kag
+  makes: [story_library]
+  library_file: data/jim_story_library.yaml
+
+select_story_recipe:
+  run: story/select_story_recipe.coffee
+  depends_on: [load_library]
+  needs: [story_library]
+  makes: [story_recipe]
+  story_id: jim_0001
+
+resolve_story_parts:
+  run: story/resolve_story_parts.coffee
+  depends_on: [select_story_recipe]
+  needs: [story_library, story_recipe]
+  makes: [story_parts]
 
 collect_diary_kag_ite:
   run: diary_ite/collect_diary_kag_ite.coffee
-  depends_on: [select_diary_events_ite]
-  needs: [selected_story_id, diary_events]
+  depends_on: [resolve_story_parts]
+  needs: [story_parts]
   makes: [diary_kag]
+  pretend_story_ids:
+    - a-hurricane-is-brewin-md
+    - aloha-oe-to-something-md
 
 build_diary_prompt_ite:
   run: diary_ite/build_diary_prompt_ite.coffee
   depends_on: [collect_diary_kag_ite]
-  needs: [selected_story_id, diary_events, diary_kag]
+  needs: [story_parts, diary_kag]
   makes: [diary_prompt_text]
 
 generate_diary_with_adapter_ite:
   run: diary_ite/generate_diary_with_adapter_ite.coffee
   depends_on: [build_diary_prompt_ite]
-  needs: [selected_story_id, diary_prompt_text]
+  needs: [story_parts, diary_prompt_text]
   makes: [diary_adapted_raw, diary_adapted_meta, diary_adapted_text]
   adapter_path: build/adapter
-  model_memo_key: modelDir
+  quantized_model_dir: build/model4
   mlx:
     max-tokens: 2000
     temp: 0.7
@@ -64,9 +82,9 @@ generate_diary_with_adapter_ite:
 generate_diary_without_adapter_ite:
   run: diary_ite/generate_diary_without_adapter_ite.coffee
   depends_on: [build_diary_prompt_ite]
-  needs: [selected_story_id, diary_prompt_text]
+  needs: [story_parts, diary_prompt_text]
   makes: [diary_base_raw, diary_base_meta, diary_base_text]
-  model_memo_key: modelDir
+  quantized_model_dir: build/model4
   mlx:
     max-tokens: 2000
     temp: 0.7

@@ -48,16 +48,10 @@ sanitizeStop = (text) ->
 @step =
   desc: "Build LoRA train/valid/test rows from SQLite-backed stories"
 
-  action: (M, stepName) ->
-    selectedEntry = M.theLowdown 'selected_story_ids'
-    selectedStoryIDs = selectedEntry?.value
-    if selectedStoryIDs is undefined
-      if typeof selectedEntry?.waitFor is 'function'
-        selectedStoryIDs = await selectedEntry.waitFor()
-      else if selectedEntry?.notifier?
-        selectedStoryIDs = await selectedEntry.notifier
+  action: (L) ->
+    selectedStoryIDs = await L.need 'selected_story_ids'
 
-    throw new Error "[#{stepName}] selected_story_ids must be an array" unless Array.isArray selectedStoryIDs
+    throw new Error "[#{L.stepName}] selected_story_ids must be an array" unless Array.isArray selectedStoryIDs
 
     rows = []
     rowsWritten = 0
@@ -71,7 +65,7 @@ sanitizeStop = (text) ->
     for storyID in selectedStoryIDs
       continue unless storyID?
 
-      storyEntry = M.theLowdown "storyByID{#{storyID}}.json"
+      storyEntry = L.theLowdown "storyByID{#{storyID}}.json"
       story = storyEntry?.value
       if story is undefined
         if typeof storyEntry?.waitFor is 'function'
@@ -79,7 +73,7 @@ sanitizeStop = (text) ->
         else if storyEntry?.notifier?
           story = await storyEntry.notifier
 
-      throw new Error "[#{stepName}] Missing storyByID for #{storyID}" unless story?
+      throw new Error "[#{L.stepName}] Missing storyByID for #{storyID}" unless story?
 
       fullStoryText = String(story.text ? '').trim()
       continue unless fullStoryText.length > 0
@@ -112,7 +106,7 @@ sanitizeStop = (text) ->
         continue
 
       maxCompletionTokens = MAX_TOTAL_TOKENS - promptTokens - SAFETY_TOKENS - STOP_TOKENS
-      throw new Error "[#{stepName}] prompt too large for token budget on story #{storyID}" if maxCompletionTokens < 80
+      throw new Error "[#{L.stepName}] prompt too large for token budget on story #{storyID}" if maxCompletionTokens < 80
 
       chunkParagraphs = []
       chunkTokens = 0
@@ -186,8 +180,8 @@ sanitizeStop = (text) ->
     console.log "[build_lora_dataset_ite] stories processed:", storiesProcessed
     console.log "[build_lora_dataset_ite] rows written:", rowsWritten
 
-    M.saveThis 'train_rows', rows
-    M.saveThis 'valid_rows', rows
-    M.saveThis 'test_rows', rows
-    M.saveThis "done:#{stepName}", true
+    L.make 'train_rows', rows
+    L.make 'valid_rows', rows
+    L.make 'test_rows', rows
+    L.done()
     return
