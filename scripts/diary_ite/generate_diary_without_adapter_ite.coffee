@@ -36,6 +36,9 @@ readArtifactTarget = (L, artifactKey) ->
       targetValue = await targetEntry.notifier
   targetValue
 
+resolveRunTag = (L) ->
+  process.env.HH_MM ? L.theLowdown('env/HH_MM')?.value ? null
+
 @step =
   desc: "Generate a diary entry without the adapter"
 
@@ -75,5 +78,8 @@ readArtifactTarget = (L, artifactKey) ->
     L.make 'diary_base_raw', String(rawOutput ? '')
     L.make 'diary_base_meta', meta
     L.make 'diary_base_text', text
+    runTag = resolveRunTag L
+    if typeof runTag is 'string' and runTag.length
+      L.saveThis "diary/diary_#{runTag}.txt", text
     L.done()
     return

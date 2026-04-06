@@ -710,6 +710,8 @@ main = ->
   M.saveThis "env/EXEC", EXEC
   M.saveThis "env/CWD",  CWD
   M.saveThis "env/PYTHON", resolvePython(CWD)
+  M.saveThis "env/HH_MM", process.env.HH_MM if process.env.HH_MM?
+  M.saveThis "env/LOGDIR", process.env.LOGDIR if process.env.LOGDIR?
 
   overridePath = path.join(CWD,'override.yaml')
   override = loadYamlSafe overridePath

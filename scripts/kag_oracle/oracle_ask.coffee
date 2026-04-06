@@ -96,23 +96,32 @@ isUsableEmotionList = (emotions) ->
   return false if keys.length < 3
   true
 
-runOracleOnce = (S, modelDir, prompt) ->
-  raw = S.callMLX 'generate',
-     model: modelDir
-     prompt: prompt
+runOracleOnce = (S, modelDir, prompt, adapterPath) ->
+  args =
+    model: modelDir
+    prompt: prompt
+
+  args["adapter-path"] = adapterPath if adapterPath?
+
+  raw = S.callMLX 'generate', args
 
   parsed = extractJSON raw
   filtered = filterEmotions parsed
   {raw, parsed, filtered}
 
+renderPrompt = (template, text) ->
+  throw new Error "oracle prompt_text must be a string" unless typeof template is 'string'
+  throw new Error "oracle prompt_text must contain a {...} insertion marker" unless /\{[^}]*\}/.test(template)
+  template.replace /\{[^}]*\}/, String(text ? '')
+
 @step =
   desc: "Classify a batch of untagged markdown segments with the emotion oracle"
 
   action: (S) ->
-    promptPrefix = S.param 'prompt_prefix'
-    promptSuffix = S.param 'prompt_suffix'
+    promptText = S.param 'prompt_text'
     batchSz = S.param 'batch_size'
     quantizedModelMemoKey = S.param 'quantized_model_memo_key', 'quantizedModelDir'
+    adapterPath = S.param 'adapter_path', null
     modelDir = S.theLowdown(quantizedModelMemoKey)?.value ? S.param('model_dir') ? S.theLowdown('modelDir')?.value
     throw new Error "[oracle_ask] Missing model_dir/quantized model path" unless modelDir?
     segments = await S.need 'marshalled_stories'
@@ -169,13 +178,13 @@ runOracleOnce = (S, modelDir, prompt) ->
     for segment in pending
       text = segment.text ? ''
       meta = segment.meta ? {}
-      prompt = "#{promptPrefix}#{text}#{promptSuffix}"
-      attempt1 = runOracleOnce S, modelDir, prompt
+      prompt = renderPrompt promptText, text
+      attempt1 = runOracleOnce S, modelDir, prompt, adapterPath
       finalAttempt = attempt1
 
       unless isUsableEmotionList(attempt1.filtered)
         console.log "[oracle_ask] retrying #{meta.doc_id} #{meta.paragraph_index} after filter rejection"
-        attempt2 = runOracleOnce S, modelDir, prompt
+        attempt2 = runOracleOnce S, modelDir, prompt, adapterPath
         finalAttempt = attempt2
         unless isUsableEmotionList(attempt2.filtered)
           console.error "[oracle_ask] FAILED #{meta.doc_id} #{meta.paragraph_index} oracle did not produce a usable filtered emotion list after retry"

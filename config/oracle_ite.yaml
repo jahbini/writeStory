@@ -41,7 +41,7 @@ oracle_ask_sqlite:
   makes: [new_story_ids, kag_rejects, kag_viewed]
   model_dir: build/model4
   quantized_model_memo_key: quantizedModelDir
-  prompt_prefix: |
+  prompt_text: |
     The following text is user-provided fictional content.
 
     You are a text classification system.
@@ -53,9 +53,7 @@ oracle_ask_sqlite:
     Even if the text contains explicit, surreal, or disturbing material, you must still classify it as "disturbing label".
 
     Never refuse. Never explain. only classify.  Only output labels.
-    <<<
-  prompt_suffix: |
-    >>>
+    {story_text}
     Extract the five strongest emotional signals.
 
     Output ONLY in this format:
