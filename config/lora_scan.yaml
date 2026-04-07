@@ -1,0 +1,30 @@
+run:
+  model: Qwen/Qwen3-4B-Instruct-2507
+  output_dir: out
+  data_dir: data
+  training_dir: build/train
+  loraLand: build/model
+  debug_s: false
+  debug_mlx: false
+  debug_sql: false
+
+artifacts:
+  scan_report:
+    target: out/lora_scan_report.txt
+
+scan_lora_training_inputs:
+  run: preflight/scan_lora_training_inputs.coffee
+  depends_on: []
+  needs: []
+  makes: [scan_report]
+  raw_paths:
+    - data/jim.md
+  intermediate_paths:
+    - data/marshalled_stories.jsonl
+  final_paths:
+    - build/train/train.jsonl
+    - build/train/valid.jsonl
+    - build/train/test.jsonl
+  sqlite_db: runtime.sqlite
+  skip_missing: true
+  fail_on_findings: true

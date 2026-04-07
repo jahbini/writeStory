@@ -84,6 +84,51 @@ ensureSingleInstance = ->
     if others.length>0 then process.exit(0)
   catch then null
 
+summarizeValue = (value) ->
+  kind = if value is null then 'null' else if Array.isArray(value) then 'array' else typeof value
+  summary = { kind }
+  if Array.isArray(value)
+    summary.count = value.length
+  else if typeof value is 'string'
+    summary.bytes = value.length
+  else if isPlainObject(value)
+    summary.count = Object.keys(value).length
+  summary
+
+createUiRecorder = (memo, stateDir) ->
+  eventsKey = path.join(stateDir, 'ui-events.jsonl')
+  runKey = path.join(stateDir, 'ui-run.json')
+
+  recorder =
+    reset: ->
+      memo.saveThis eventsKey, []
+      memo.saveThis runKey, {}
+
+    event: (payload) ->
+      row = Object.assign
+        at: new Date().toISOString()
+      , payload
+      current = memo.theLowdown(eventsKey)?.value
+      current = [] unless Array.isArray(current)
+      rows = current.slice()
+      rows.push row
+      memo.saveThis eventsKey, rows
+      row
+
+    saveRun: (payload) ->
+      row = Object.assign
+        updated_at: new Date().toISOString()
+      , payload
+      memo.saveThis runKey, row
+      row
+
+    updateRun: (patch) ->
+      current = memo.theLowdown(runKey)?.value
+      current = {} unless isPlainObject(current)
+      @saveRun Object.assign({}, current, patch)
+
+  recorder
+
 # -------------------------------------------------------------------
 # State Directory: One file per step
 # -------------------------------------------------------------------
@@ -354,7 +399,7 @@ terminalSteps = (steps) ->
 isNewStyleStep = (p) ->
   try /\@step\s*=/.test fs.readFileSync(p,'utf8') catch then false
 
-createStepLedger = (memo, stepName, resolveArtifact, artifactSpecFor) ->
+createStepLedger = (memo, stepName, resolveArtifact, artifactSpecFor, uiRecorder = null) ->
   getDecls = ->
     stepP = memo.theLowdown("params/#{stepName}.yaml")?.value ? {}
     needs = normalizeArtifactKeys(stepP.needs ? [])
@@ -378,6 +423,9 @@ createStepLedger = (memo, stepName, resolveArtifact, artifactSpecFor) ->
   debug = (parts...) ->
     return unless debugEnabled()
     console.log "[#{new Date().toISOString()}] [S #{stepName}]", parts...
+
+  ui = (payload) ->
+    try uiRecorder?.event Object.assign({ step: stepName }, payload) catch then null
 
   getStepParams = ->
     memo.theLowdown("params/#{stepName}.yaml")?.value ? {}
@@ -433,15 +481,19 @@ createStepLedger = (memo, stepName, resolveArtifact, artifactSpecFor) ->
 
     param: (key, defaultValue) ->
       debug "param request", key
+      ui type:'param', phase:'request', key:key
       value = memo.getStepParam stepName, key
       if value is undefined and arguments.length >= 2
         debug "param default", key, defaultValue
+        ui type:'param', phase:'default', key:key, value_summary:summarizeValue(defaultValue)
         return defaultValue
       if value is undefined
         debug "param missing", key
+        ui type:'param', phase:'missing', key:key
         console.error "[#{stepName}] Missing required param '#{key}'"
         throw new Error "[#{stepName}] Missing required param '#{key}'"
       debug "param resolved", key, "(#{typeof value})", value
+      ui type:'param', phase:'resolved', key:key, value_summary:summarizeValue(value)
       value
 
     getStepParam: (nameOrKey, key, defaultValue = undefined) ->
@@ -452,6 +504,7 @@ createStepLedger = (memo, stepName, resolveArtifact, artifactSpecFor) ->
     need: (artifactKey) ->
       { needs, makes } = getDecls()
       debug "need request", describeArtifact(artifactKey), "declared needs=", needs.join(','), "makes=", makes.join(',')
+      ui type:'need', phase:'request', artifact:artifactKey, artifact_detail:describeArtifact(artifactKey)
       declared = needs.includes(artifactKey) or makes.includes(artifactKey)
       throw new Error "[#{stepName}] Artifact '#{artifactKey}' must be declared in needs or makes" unless declared
 
@@ -459,19 +512,23 @@ createStepLedger = (memo, stepName, resolveArtifact, artifactSpecFor) ->
       value = entry?.value
       if value is undefined and needs.includes(artifactKey)
         debug "need waiting", describeArtifact(artifactKey)
+        ui type:'need', phase:'waiting', artifact:artifactKey, artifact_detail:describeArtifact(artifactKey)
         value = await entry.notifier
         debug "need awakened", describeArtifact(artifactKey), "(#{typeof value})"
 
       if value is undefined
         debug "need missing", describeArtifact(artifactKey)
+        ui type:'need', phase:'missing', artifact:artifactKey, artifact_detail:describeArtifact(artifactKey)
         console.error "[#{stepName}] Missing required artifact '#{artifactKey}'"
         throw new Error "[#{stepName}] Missing required artifact '#{artifactKey}'"
       debug "need resolved", describeArtifact(artifactKey), "(#{typeof value})"
+      ui type:'need', phase:'resolved', artifact:artifactKey, artifact_detail:describeArtifact(artifactKey), value_summary:summarizeValue(value)
       value
 
     peek: (artifactKey, defaultValue = undefined) ->
       { needs, makes } = getDecls()
       debug "peek request", describeArtifact(artifactKey), "declared needs=", needs.join(','), "makes=", makes.join(',')
+      ui type:'peek', phase:'request', artifact:artifactKey, artifact_detail:describeArtifact(artifactKey)
       declared = needs.includes(artifactKey) or makes.includes(artifactKey)
       throw new Error "[#{stepName}] Artifact '#{artifactKey}' must be declared in needs or makes" unless declared
 
@@ -500,25 +557,31 @@ createStepLedger = (memo, stepName, resolveArtifact, artifactSpecFor) ->
 
       if value is undefined
         debug "peek default", describeArtifact(artifactKey), defaultValue
+        ui type:'peek', phase:'default', artifact:artifactKey, artifact_detail:describeArtifact(artifactKey), value_summary:summarizeValue(defaultValue)
         return defaultValue
       debug "peek resolved", describeArtifact(artifactKey), "(#{typeof value})"
+      ui type:'peek', phase:'resolved', artifact:artifactKey, artifact_detail:describeArtifact(artifactKey), value_summary:summarizeValue(value)
       value
 
     make: (artifactKey, value) ->
       { makes } = getDecls()
       debug "make request", describeArtifact(artifactKey), "declared makes=", makes.join(',')
+      ui type:'make', phase:'request', artifact:artifactKey, artifact_detail:describeArtifact(artifactKey), value_summary:summarizeValue(value)
       throw new Error "[#{stepName}] Artifact '#{artifactKey}' must be declared in makes" unless makes.includes artifactKey
       memo.saveThis artifactKey, value
       debug "make wrote", describeArtifact(artifactKey), "(#{typeof value})"
+      ui type:'make', phase:'written', artifact:artifactKey, artifact_detail:describeArtifact(artifactKey), value_summary:summarizeValue(value)
       value
 
     done: ->
       debug "done"
+      ui type:'step', phase:'done'
       memo.saveThis "done:#{stepName}", true
       true
 
     fail: (err) ->
       debug "fail", String(err?.message ? err)
+      ui type:'step', phase:'failed', error:String(err?.message ? err)
       memo.saveThis "done:#{stepName}", false
       throw err
 
@@ -534,12 +597,13 @@ createStepLedger = (memo, stepName, resolveArtifact, artifactSpecFor) ->
 
   ledger
 
-runStep = (n, def, exp, M, S, active, resolveArtifact, artifactSpecFor) ->
+runStep = (n, def, exp, M, S, active, resolveArtifact, artifactSpecFor, uiRecorder = null) ->
   new Promise (res, rej) ->
     active.count += 1
     active.names ?= new Set()
     active.names.add n
     S.markRunning n
+    try uiRecorder?.event type:'step', phase:'running', step:n catch then null
 
     finish = (ok, errMsg=null) ->
       active.count -= 1
@@ -551,6 +615,7 @@ runStep = (n, def, exp, M, S, active, resolveArtifact, artifactSpecFor) ->
         else
           S.markDone n
         M.saveThis "done:#{n}", true
+        try uiRecorder?.event type:'step', phase:'finished', step:n, status:'done' catch then null
         res(true)
       else
         S.markFailed n, errMsg ? "failed"
@@ -559,6 +624,7 @@ runStep = (n, def, exp, M, S, active, resolveArtifact, artifactSpecFor) ->
           by: n
           reason: errMsg ? "failed"
         M.saveThis "done:#{n}", false
+        try uiRecorder?.event type:'step', phase:'finished', step:n, status:'failed', error:String(errMsg ? "failed") catch then null
         rej new Error(String(errMsg ? "failed"))
 
     script = path.join(EXEC,'scripts',def.run)
@@ -589,7 +655,7 @@ runStep = (n, def, exp, M, S, active, resolveArtifact, artifactSpecFor) ->
         finish(false, "Missing @step.action in #{script}")
         return
       try
-        L = createStepLedger(M, n, resolveArtifact, artifactSpecFor)
+        L = createStepLedger(M, n, resolveArtifact, artifactSpecFor, uiRecorder)
         pp=Promise.resolve(step.action(L,n,M))
         pp.then -> finish(true)
         pp.catch (e)-> finish(false, e.message)
@@ -706,6 +772,8 @@ main = ->
   metaLoader = require path.join(EXEC, 'meta')
   metaLoader(M, { baseDir: CWD })
   S = new StepStateStore path.join(CWD,'state')
+  U = createUiRecorder M, path.join(CWD,'state')
+  U.reset()
 
   M.saveThis "env/EXEC", EXEC
   M.saveThis "env/CWD",  CWD
@@ -721,6 +789,14 @@ main = ->
 
   configPath = path.join(EXEC,'config',"#{override.pipeline}.yaml")
   experiment = createExperimentObject configPath, overridePath
+  U.saveRun
+    pipeline: override.pipeline
+    cwd: CWD
+    exec: EXEC
+    hh_mm: process.env.HH_MM ? null
+    logdir: process.env.LOGDIR ? null
+    started_at: new Date().toISOString()
+    status: 'running'
   if experiment.run.model && experiment.run.loraLand
     modelDirName = experiment.run.model.replace /\//g, '--'
     targetDir    = path.resolve experiment.run.loraLand, modelDirName
@@ -851,8 +927,10 @@ main = ->
         return if M.theLowdown("pipeline:shutdown").value?
         return if M.theLowdown("done:#{n}").value is true
         scheduled.add n
+        try U.event type:'step', phase:'scheduled', step:n catch then null
+        artifactSpecLookup = (artifactKey) -> artifacts[artifactKey]
         Promise.resolve(wireInputsForStep(n))
-          .then -> runStep(n, steps[n], experiment, M, S, active, resolveArtifact, (artifactKey) -> artifacts[artifactKey])
+          .then -> runStep(n, steps[n], experiment, M, S, active, resolveArtifact, artifactSpecLookup, U)
           .then -> collectOutputsForStep(n)
           .catch (e) ->
             console.error "! Step #{n} error:", e.message
@@ -866,6 +944,9 @@ main = ->
     sd = M.theLowdown("pipeline:shutdown").value
     if sd?
       S.writePipelineShutdown sd
+      U.updateRun
+        status: 'shutdown'
+        shutdown: sd
       banner "🛑 PIPELINE SHUTDOWN"
       console.log "  by:", sd.by
       console.log "  reason:", sd.reason
@@ -883,9 +964,15 @@ main = ->
 
     if doneFinals and active.count is 0
       if anyFail
+        U.updateRun
+          status: 'failed'
+          finished_at: new Date().toISOString()
         banner "💥 Pipeline finished with failures (final: #{finals.join(', ')})"
         process.exit(1)
       else
+        U.updateRun
+          status: 'done'
+          finished_at: new Date().toISOString()
         banner "🌟 Pipeline finished (final: #{finals.join(', ')})"
         process.exit(0)
 

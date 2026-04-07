@@ -1,0 +1,39 @@
+run:
+  model: Qwen/Qwen3-4B-Instruct-2507
+  output_dir: out
+  data_dir: data
+  training_dir: build/train
+  loraLand: build/model
+  debug_s: false
+  debug_mlx: false
+  debug_sql: false
+
+artifacts:
+  scan_report:
+    target: out/story_scan_report.txt
+
+scan_story_artifacts:
+  run: preflight/scan_story_artifacts.coffee
+  depends_on: []
+  needs: []
+  makes: [scan_report]
+  raw_paths:
+    - data/jim.md
+    - data/jim_story_library.yaml
+  derived_paths:
+    - data/marshalled_stories.jsonl
+    - build/train/train.jsonl
+    - build/train/valid.jsonl
+    - build/train/test.jsonl
+    - out/story.txt
+    - out/story_generate_raw.txt
+    - out/diary_prompt.txt
+    - out/diary_adapted.txt
+    - out/diary_base.txt
+    - out/diary_adapted_raw.txt
+    - out/diary_base_raw.txt
+    - out/story_library.json
+    - out/story_parts.json
+    - out/diary_kag.json
+  skip_missing: true
+  fail_on_findings: true

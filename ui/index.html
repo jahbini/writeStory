@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pipeline Monitor</title>
+  <style>
+    :root {
+      --bg: #f2efe8;
+      --ink: #1d221f;
+      --muted: #6b726d;
+      --panel: #fffdf8;
+      --line: #d7d1c2;
+      --accent: #145a46;
+      --warn: #8a5a00;
+      --bad: #8a1f2a;
+      --good: #1f6a3a;
+      --mono: "SFMono-Regular", Menlo, Consolas, monospace;
+      --sans: "Avenir Next", "Helvetica Neue", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: var(--sans);
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, #fdf8ea 0, transparent 30%),
+        linear-gradient(180deg, #f4f1e9 0%, #ebe6da 100%);
+    }
+    .wrap {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+    h1, h2 { margin: 0 0 12px; }
+    h1 { font-size: 34px; letter-spacing: 0.02em; }
+    h2 { font-size: 16px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+    .grid {
+      display: grid;
+      grid-template-columns: 1.2fr 1fr;
+      gap: 16px;
+      align-items: start;
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 16px;
+      box-shadow: 0 4px 18px rgba(43, 45, 40, 0.06);
+    }
+    .hero {
+      display: flex;
+      justify-content: space-between;
+      align-items: end;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .status {
+      font-size: 13px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    .status.running { color: var(--accent); border-color: #9dc5b8; background: #edf8f4; }
+    .status.done { color: var(--good); border-color: #aad2b0; background: #eef9ef; }
+    .status.failed, .status.shutdown { color: var(--bad); border-color: #d5a1a8; background: #fff1f3; }
+    .kv {
+      display: grid;
+      grid-template-columns: 130px 1fr;
+      gap: 6px 10px;
+      font-size: 14px;
+    }
+    .kv .k { color: var(--muted); }
+    .steps {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+    .steps th, .steps td {
+      padding: 8px 6px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+    .steps th { color: var(--muted); font-weight: 600; }
+    .mono { font-family: var(--mono); }
+    .events {
+      display: grid;
+      gap: 8px;
+      max-height: 420px;
+      overflow: auto;
+    }
+    .event {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px;
+      background: #fff;
+      font-size: 13px;
+    }
+    .event .top {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 4px;
+    }
+    pre {
+      margin: 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font: 12px/1.4 var(--mono);
+      background: #171917;
+      color: #f2f0e8;
+      border-radius: 12px;
+      padding: 12px;
+      max-height: 320px;
+      overflow: auto;
+    }
+    .files {
+      display: grid;
+      gap: 6px;
+      font-size: 14px;
+    }
+    .file {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 6px;
+    }
+    @media (max-width: 900px) {
+      .grid { grid-template-columns: 1fr; }
+      .hero { flex-direction: column; align-items: start; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="hero">
+      <div>
+        <h1>Pipeline Monitor</h1>
+        <div id="subtitle" class="mono"></div>
+      </div>
+      <div id="run-status" class="status">unknown</div>
+    </div>
+
+    <div class="grid">
+      <section class="panel">
+        <h2>Run</h2>
+        <div id="run-kv" class="kv"></div>
+      </section>
+
+      <section class="panel">
+        <h2>Outputs</h2>
+        <div id="out-files" class="files"></div>
+        <h2 style="margin-top:16px;">Diary Files</h2>
+        <div id="diary-files" class="files"></div>
+      </section>
+
+      <section class="panel">
+        <h2>Steps</h2>
+        <table class="steps">
+          <thead>
+            <tr><th>Step</th><th>Status</th><th>Updated</th></tr>
+          </thead>
+          <tbody id="steps-body"></tbody>
+        </table>
+      </section>
+
+      <section class="panel">
+        <h2>Recent Events</h2>
+        <div id="events" class="events"></div>
+      </section>
+
+      <section class="panel">
+        <h2>Latest Log</h2>
+        <pre id="latest-log"></pre>
+      </section>
+
+      <section class="panel">
+        <h2>Latest Err</h2>
+        <pre id="latest-err"></pre>
+      </section>
+    </div>
+  </div>
+
+  <script>
+    const byId = (id) => document.getElementById(id);
+
+    function renderKV(target, rows) {
+      target.innerHTML = rows.map(([k, v]) => `
+        <div class="k">${k}</div>
+        <div class="mono">${v ?? ''}</div>
+      `).join('');
+    }
+
+    function renderFiles(target, files) {
+      if (!files || !files.length) {
+        target.innerHTML = '<div class="mono">none</div>';
+        return;
+      }
+      target.innerHTML = files.map((f) => `
+        <div class="file">
+          <span class="mono">${f.name}</span>
+          <span class="mono">${f.size}</span>
+        </div>
+      `).join('');
+    }
+
+    function renderSteps(rows) {
+      byId('steps-body').innerHTML = (rows || []).map((row) => `
+        <tr>
+          <td class="mono">${row.step || ''}</td>
+          <td>${row.status || ''}</td>
+          <td class="mono">${row.updated_at || row.finished_at || row.started_at || ''}</td>
+        </tr>
+      `).join('');
+    }
+
+    function renderEvents(rows) {
+      const items = (rows || []).slice().reverse();
+      byId('events').innerHTML = items.map((row) => `
+        <div class="event">
+          <div class="top">
+            <strong>${row.type || ''}:${row.phase || ''}</strong>
+            <span class="mono">${row.at || ''}</span>
+          </div>
+          <div class="mono">${row.step || ''} ${row.artifact || row.key || ''}</div>
+          <div class="mono">${row.artifact_detail || ''}</div>
+        </div>
+      `).join('');
+    }
+
+    async function refresh() {
+      const res = await fetch('/api/status', { cache: 'no-store' });
+      const data = await res.json();
+      const run = data.run || {};
+      byId('subtitle').textContent = `${run.pipeline || ''}  ${run.hh_mm || ''}  ${run.logdir || ''}`.trim();
+      const status = run.status || 'unknown';
+      const statusEl = byId('run-status');
+      statusEl.textContent = status;
+      statusEl.className = `status ${status}`;
+
+      renderKV(byId('run-kv'), [
+        ['pipeline', run.pipeline],
+        ['status', run.status],
+        ['cwd', run.cwd],
+        ['started', run.started_at],
+        ['finished', run.finished_at],
+        ['hh_mm', run.hh_mm],
+        ['logdir', run.logdir],
+        ['latest log', data.latest_log_stem]
+      ]);
+
+      renderFiles(byId('out-files'), data.out_files);
+      renderFiles(byId('diary-files'), data.diary_files);
+      renderSteps(data.steps);
+      renderEvents(data.events);
+      byId('latest-log').textContent = data.latest_log || '';
+      byId('latest-err').textContent = data.latest_err || '';
+    }
+
+    refresh().catch(console.error);
+    setInterval(() => refresh().catch(console.error), 2000);
+  </script>
+</body>
+</html>
