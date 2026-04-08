@@ -479,6 +479,7 @@
       const res = await fetch('/api/status', { cache: 'no-store' });
       const data = await res.json();
       const run = data.run || {};
+      const pipelineState = data.pipeline_state || {};
       byId('subtitle').textContent = `${run.pipeline || ''}  ${run.hh_mm || ''}  ${run.logdir || ''}`.trim();
       const status = run.status || 'unknown';
       const statusEl = byId('run-status');
@@ -494,6 +495,9 @@
         ['finished', formatLocalTime(run.finished_at)],
         ['hh_mm', run.hh_mm],
         ['countdown', run.countdown_seconds ?? ''],
+        ['shutdown by', pipelineState.by],
+        ['shutdown reason', pipelineState.reason],
+        ['shutdown at', formatLocalTime(pipelineState.timestamp)],
         ['latest log', data.latest_log_stem]
       ]);
 

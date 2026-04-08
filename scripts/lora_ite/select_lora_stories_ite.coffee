@@ -28,6 +28,12 @@
     for storyID, idx in selectedStoryIDs
       console.log "[select_lora_stories_ite] batch[#{idx}] #{storyID}"
 
+    if selectedStoryIDs.length is 0
+      L.saveThis 'pipeline:shutdown',
+        by: L.stepName
+        reason: 'no remaining SQLite-backed stories are available for LoRA training'
+        timestamp: new Date().toISOString()
+
     L.make 'selected_story_ids', selectedStoryIDs
     L.done()
     return

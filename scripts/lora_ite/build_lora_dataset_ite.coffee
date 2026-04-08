@@ -53,6 +53,14 @@ sanitizeStop = (text) ->
 
     throw new Error "[#{L.stepName}] selected_story_ids must be an array" unless Array.isArray selectedStoryIDs
 
+    if selectedStoryIDs.length is 0
+      console.log "[build_lora_dataset_ite] no selected stories; writing empty datasets and stopping"
+      L.make 'train_rows', []
+      L.make 'valid_rows', []
+      L.make 'test_rows', []
+      L.done()
+      return
+
     rows = []
     rowsWritten = 0
     storiesProcessed = 0

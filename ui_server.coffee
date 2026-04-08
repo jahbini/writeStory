@@ -226,6 +226,7 @@ collectExpectedOutputs = (run) ->
 
 buildStatus = ->
   run = readJson path.join(CWD, 'state', 'ui-run.json'), {}
+  pipelineState = readJson path.join(CWD, 'pipeline.json'), null
   expectedOutputs = collectExpectedOutputs(run)
   events = readJsonlTail path.join(CWD, 'state', 'ui-events.jsonl')
   steps = collectStepStates()
@@ -235,6 +236,7 @@ buildStatus = ->
 
   {
     run: run
+    pipeline_state: pipelineState
     controls: buildControls()
     steps: steps
     events: events
