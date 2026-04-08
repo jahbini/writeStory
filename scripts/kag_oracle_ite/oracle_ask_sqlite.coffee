@@ -26,7 +26,11 @@ extractJSON = (raw) ->
   lines = String(raw).split /\r?\n/
 
   for line, idx in lines
-    numbered = line.match /^\s*([1-5])(?!\d)[^A-Za-z\s]*\s*(.+?)\s*$/
+    cleanedLine = String(line ? '').trim()
+    continue unless cleanedLine.length
+    continue if /^=+$/.test(cleanedLine)
+
+    numbered = cleanedLine.match /^\s*(\d+)(?!\d)[^A-Za-z\s]*\s*(.+?)\s*$/
     continue unless numbered?
 
     ordinal = Number numbered[1]
@@ -92,16 +96,16 @@ filterEmotions = (emotions) ->
 
 isUsableEmotionList = (emotions) ->
   return false unless emotions? and typeof emotions is 'object'
-  Object.keys(emotions).length >= 3
+  Object.keys(emotions).length >= 1
 
-runOracleOnce = (S, modelDir, prompt, adapterPath) ->
+runOracleOnce = (S, modelDir, prompt, adapterPath, debugMlx = false) ->
   args =
     model: modelDir
     prompt: prompt
 
   args["adapter-path"] = adapterPath if adapterPath?
 
-  raw = S.callMLX 'generate', args
+  raw = S.callMLX 'generate', args, debugMlx
 
   parsed = extractJSON raw
   filtered = filterEmotions parsed
@@ -122,8 +126,6 @@ renderPrompt = (template, text) ->
     adapterPath = S.param 'adapter_path', null
     modelDir = S.theLowdown(quantizedModelMemoKey)?.value ? S.param('model_dir') ? S.theLowdown('modelDir')?.value
     throw new Error "[oracle_ask_sqlite] Missing model_dir/quantized model path" unless modelDir?
-
-    await S.need 'story_seed_ids'
 
     pendingStories = S.theLowdown('storiesMissingKag.jsonl')?.value
     throw new Error "[#{S.stepName}] storiesMissingKag.jsonl must be an array" unless Array.isArray pendingStories
@@ -164,7 +166,7 @@ renderPrompt = (template, text) ->
 
       unless isUsableEmotionList(attempt1.filtered)
         console.log "[oracle_ask_sqlite] retrying #{storyID} after filter rejection"
-        attempt2 = runOracleOnce S, modelDir, prompt, adapterPath
+        attempt2 = runOracleOnce S, modelDir, prompt, adapterPath, true
         finalAttempt = attempt2
         unless isUsableEmotionList(attempt2.filtered)
           console.error "[oracle_ask_sqlite] FAILED #{storyID} oracle did not produce a usable filtered emotion list after retry"

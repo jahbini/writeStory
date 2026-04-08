@@ -81,8 +81,11 @@ ensureSingleInstance = ->
     out = execSync("ps -Ao pid,command | grep 'coffee' | grep '#{scriptPath}' | grep -v grep || true").toString()
     lines = out.trim().split("\n").filter (l)-> l.length>0
     others = lines.filter (l)-> not l.startsWith(process.pid.toString())
-    if others.length>0 then process.exit(0)
+    if others.length > 0
+      console.error "[pipeline_runner] another pipeline_runner.coffee is already active"
+      return others
   catch then null
+  null
 
 summarizeValue = (value) ->
   kind = if value is null then 'null' else if Array.isArray(value) then 'array' else typeof value
@@ -767,7 +770,20 @@ Implementation notes:
 # MODIFY main()
 # -------------------------------------------------------------------
 main = ->
-  ensureSingleInstance()
+  otherRunners = ensureSingleInstance()
+  if otherRunners?.length
+    stateDir = path.join(CWD, 'state')
+    fs.mkdirSync(stateDir, {recursive:true})
+    uiRunPath = path.join(stateDir, 'ui-run.json')
+    current = {}
+    if fs.existsSync(uiRunPath)
+      try current = JSON.parse(fs.readFileSync(uiRunPath, 'utf8')) catch then current = {}
+    current.status = 'skipped'
+    current.finished_at = new Date().toISOString()
+    current.reason = 'another pipeline_runner.coffee is already active'
+    current.other_runners = otherRunners
+    fs.writeFileSync uiRunPath, JSON.stringify(current, null, 2), 'utf8'
+    process.exit(0)
 
   M = new Memo()
   metaLoader = require path.join(EXEC, 'meta')

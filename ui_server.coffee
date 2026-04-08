@@ -96,9 +96,27 @@ readYaml = (p) ->
 
 buildControls = ->
   override = readOverride()
+  libraryDoc = readYaml path.join(CWD, 'data', 'jim_story_library.yaml')
+  library = libraryDoc?.library ? {}
+  storyStep = override?.select_story_recipe ? {}
+
+  makeOptions = (shelfName) ->
+    shelf = library?[shelfName] ? {}
+    rows = []
+    for own key, value of shelf
+      label = value?.text ? value?.character ? key
+      rows.push { key, label }
+    rows.sort (a, b) -> String(a.label).localeCompare String(b.label)
+    rows
+
   {
     pipeline: override.pipeline ? ''
-    story_id: override?.select_story_recipe?.story_id ? ''
+    story_id: storyStep.story_id ? ''
+    scene: storyStep.scene ? ''
+    arrival: storyStep.arrival ? ''
+    disturbance: storyStep.disturbance ? ''
+    reflection: storyStep.reflection ? ''
+    realization: storyStep.realization ? ''
     pipelines: [
       'base_ite'
       'oracle_ite'
@@ -112,6 +130,11 @@ buildControls = ->
       'jim_0002'
       'jim_0003'
     ]
+    scene_options: makeOptions 'scenes'
+    arrival_options: makeOptions 'characters'
+    disturbance_options: makeOptions 'disturbances'
+    reflection_options: makeOptions 'reflections'
+    realization_options: makeOptions 'realizations'
   }
 
 describeOutputFile = (relativePath, runStart = null) ->
@@ -178,9 +201,9 @@ buildStatus = ->
   expectedOutputs = collectExpectedOutputs(run)
   events = readJsonlTail path.join(CWD, 'state', 'ui-events.jsonl')
   steps = collectStepStates()
-  stem = latestLogStem()
-  latestLog = if stem? then tailText(path.join(CWD, 'logs', "#{stem}.log")) else ''
-  latestErr = if stem? then tailText(path.join(CWD, 'logs', "#{stem}.err")) else ''
+  stem = if run?.logdir? then String(run.logdir) else latestLogStem()
+  latestLog = if stem? then readText(path.join(CWD, 'logs', "#{stem}.log")) else ''
+  latestErr = if stem? then readText(path.join(CWD, 'logs', "#{stem}.err")) else ''
 
   {
     run: run
@@ -268,13 +291,36 @@ seedUiRun = (launch, override) ->
 
   writeText runPath, JSON.stringify(seeded, null, 2)
 
+markUiRunExited = (launch, patch = {}) ->
+  runPath = path.join(CWD, 'state', 'ui-run.json')
+  current = readJson(runPath, {})
+  return unless current? and typeof current is 'object' and not Array.isArray(current)
+  return unless current.pid is launch.pid
+  return unless current.status in ['launching', 'running']
+
+  next = Object.assign {}, current,
+    status: patch.status ? 'exited'
+    finished_at: patch.finished_at ? new Date().toISOString()
+  , patch
+
+  writeText runPath, JSON.stringify(next, null, 2)
+
 writeOverride = (payload) ->
   override = readOverride()
   override.pipeline = String(payload.pipeline ? override.pipeline ? '')
 
+  override.select_story_recipe ?= {}
+
   if payload.story_id?
-    override.select_story_recipe ?= {}
     override.select_story_recipe.story_id = String(payload.story_id)
+
+  for key in ['scene', 'arrival', 'disturbance', 'reflection', 'realization']
+    if payload[key]?
+      value = String(payload[key]).trim()
+      if value.length
+        override.select_story_recipe[key] = value
+      else
+        delete override.select_story_recipe[key]
 
   text = yaml.dump override,
     lineWidth: 120
@@ -286,8 +332,12 @@ startRunner = ->
   runTag = buildRunTag()
   logDir = path.join(CWD, 'logs')
   fs.mkdirSync logDir, { recursive: true }
-  outFd = fs.openSync path.join(logDir, "#{runTag.logdir}.log"), 'a'
-  errFd = fs.openSync path.join(logDir, "#{runTag.logdir}.err"), 'a'
+  logPath = path.join(logDir, "#{runTag.logdir}.log")
+  errPath = path.join(logDir, "#{runTag.logdir}.err")
+  fs.writeFileSync logPath, '', 'utf8'
+  fs.writeFileSync errPath, '', 'utf8'
+  outFd = fs.openSync logPath, 'a'
+  errFd = fs.openSync errPath, 'a'
 
   child = spawn 'coffee', [RUNNER],
     cwd: CWD
@@ -298,6 +348,26 @@ startRunner = ->
       LOGDIR: runTag.logdir
 
   child.unref()
+  child.on 'error', (err) ->
+    markUiRunExited {
+      pid: child.pid
+      hh_mm: runTag.hh_mm
+      logdir: runTag.logdir
+    },
+      status: 'failed'
+      error: String(err?.message ? err)
+
+  child.on 'exit', (code, signal) ->
+    status = if code is 0 then 'done' else 'failed'
+    markUiRunExited {
+      pid: child.pid
+      hh_mm: runTag.hh_mm
+      logdir: runTag.logdir
+    },
+      status: status
+      exit_code: code
+      signal: signal ? null
+
   {
     pid: child.pid
     hh_mm: runTag.hh_mm
@@ -327,6 +397,38 @@ handleLaunch = (req, res) ->
     logdir: launch.logdir
     override: override
 
+handleKill = (req, res) ->
+  runPath = path.join(CWD, 'state', 'ui-run.json')
+  run = readJson(runPath, {})
+  pid = Number(run?.pid ? 0)
+  targetKind = 'run'
+
+  if run?.status is 'skipped' and Array.isArray(run?.other_runners) and run.other_runners.length > 0
+    first = String(run.other_runners[0] ? '')
+    match = first.match(/^\s*(\d+)\b/)
+    if match?
+      pid = Number(match[1])
+      targetKind = 'blocking_runner'
+
+  return sendJson(res, 400, { ok: false, error: 'no active run pid recorded' }) unless pid > 0
+
+  try
+    process.kill pid, 'SIGTERM'
+  catch err
+    return sendJson res, 500,
+      ok: false
+      error: String(err?.message ? err)
+
+  next = Object.assign {}, run,
+    status: 'killing'
+    kill_requested_at: new Date().toISOString()
+  writeText runPath, JSON.stringify(next, null, 2)
+
+  sendJson res, 200,
+    ok: true
+    pid: pid
+    target_kind: targetKind
+
 server = http.createServer (req, res) ->
   url = req.url ? '/'
   if url is '/' or url is '/index.html'
@@ -341,6 +443,11 @@ server = http.createServer (req, res) ->
     return sendJson res, 200, { ok: true, file: payload }
   if url is '/api/launch' and req.method is 'POST'
     return Promise.resolve(handleLaunch(req, res)).catch (err) ->
+      sendJson res, 500,
+        ok: false
+        error: String(err?.message ? err)
+  if url is '/api/kill' and req.method is 'POST'
+    return Promise.resolve(handleKill(req, res)).catch (err) ->
       sendJson res, 500,
         ok: false
         error: String(err?.message ? err)

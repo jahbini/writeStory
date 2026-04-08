@@ -26,7 +26,11 @@ extractJSON = (raw) ->
   lines = String(raw).split /\r?\n/
 
   for line, idx in lines
-    numbered = line.match /^\s*([1-5])(?!\d)[^A-Za-z\s]*\s*(.+?)\s*$/
+    cleanedLine = String(line ? '').trim()
+    continue unless cleanedLine.length
+    continue if /^=+$/.test(cleanedLine)
+
+    numbered = cleanedLine.match /^\s*(\d+)(?!\d)[^A-Za-z\s]*\s*(.+?)\s*$/
     continue unless numbered?
 
     ordinal = Number numbered[1]
@@ -93,17 +97,17 @@ filterEmotions = (emotions) ->
 isUsableEmotionList = (emotions) ->
   return false unless emotions? and typeof emotions is 'object'
   keys = Object.keys emotions
-  return false if keys.length < 3
+  return false if keys.length < 1
   true
 
-runOracleOnce = (S, modelDir, prompt, adapterPath) ->
+runOracleOnce = (S, modelDir, prompt, adapterPath, debugMlx = false) ->
   args =
     model: modelDir
     prompt: prompt
 
   args["adapter-path"] = adapterPath if adapterPath?
 
-  raw = S.callMLX 'generate', args
+  raw = S.callMLX 'generate', args, debugMlx
 
   parsed = extractJSON raw
   filtered = filterEmotions parsed
@@ -184,7 +188,7 @@ renderPrompt = (template, text) ->
 
       unless isUsableEmotionList(attempt1.filtered)
         console.log "[oracle_ask] retrying #{meta.doc_id} #{meta.paragraph_index} after filter rejection"
-        attempt2 = runOracleOnce S, modelDir, prompt, adapterPath
+        attempt2 = runOracleOnce S, modelDir, prompt, adapterPath, true
         finalAttempt = attempt2
         unless isUsableEmotionList(attempt2.filtered)
           console.error "[oracle_ask] FAILED #{meta.doc_id} #{meta.paragraph_index} oracle did not produce a usable filtered emotion list after retry"

@@ -249,7 +249,28 @@
             Diary Story
             <select id="story-select"></select>
           </label>
+          <label>
+            Scene
+            <select id="scene-select"></select>
+          </label>
+          <label>
+            Arrival
+            <select id="arrival-select"></select>
+          </label>
+          <label>
+            Disturbance
+            <select id="disturbance-select"></select>
+          </label>
+          <label>
+            Reflection
+            <select id="reflection-select"></select>
+          </label>
+          <label>
+            Realization
+            <select id="realization-select"></select>
+          </label>
           <button id="launch-button" type="button">Write Override And Run</button>
+          <button id="kill-button" type="button">Kill Run</button>
           <div id="launch-result" class="hint mono"></div>
         </div>
       </section>
@@ -353,14 +374,32 @@
     function renderControls(controls) {
       const pipelineSelect = byId('pipeline-select');
       const storySelect = byId('story-select');
+      const sceneSelect = byId('scene-select');
+      const arrivalSelect = byId('arrival-select');
+      const disturbanceSelect = byId('disturbance-select');
+      const reflectionSelect = byId('reflection-select');
+      const realizationSelect = byId('realization-select');
       const pipelines = controls?.pipelines || [];
       const storyIds = controls?.diary_story_ids || [];
       const selectedPipeline = controls?.pipeline || '';
       const selectedStory = controls?.story_id || '';
+      const selectedScene = controls?.scene || '';
+      const selectedArrival = controls?.arrival || '';
+      const selectedDisturbance = controls?.disturbance || '';
+      const selectedReflection = controls?.reflection || '';
+      const selectedRealization = controls?.realization || '';
 
       if (controlsDirty && controlsInitialized) {
         return;
       }
+
+      const renderOptionList = (selectEl, rows, selectedValue) => {
+        const base = ['<option value="">(default from story)</option>'];
+        const items = (rows || []).map((row) => `
+          <option value="${row.key}" ${row.key === selectedValue ? 'selected' : ''}>${row.label}</option>
+        `);
+        selectEl.innerHTML = base.concat(items).join('');
+      };
 
       pipelineSelect.innerHTML = pipelines.map((name) => `
         <option value="${name}" ${name === selectedPipeline ? 'selected' : ''}>${name}</option>
@@ -369,6 +408,12 @@
       storySelect.innerHTML = storyIds.map((name) => `
         <option value="${name}" ${name === selectedStory ? 'selected' : ''}>${name}</option>
       `).join('');
+
+      renderOptionList(sceneSelect, controls?.scene_options, selectedScene);
+      renderOptionList(arrivalSelect, controls?.arrival_options, selectedArrival);
+      renderOptionList(disturbanceSelect, controls?.disturbance_options, selectedDisturbance);
+      renderOptionList(reflectionSelect, controls?.reflection_options, selectedReflection);
+      renderOptionList(realizationSelect, controls?.realization_options, selectedRealization);
 
       controlsInitialized = true;
     }
@@ -381,6 +426,36 @@
           <td class="mono">${formatLocalTime(row.updated_at || row.finished_at || row.started_at || '')}</td>
         </tr>
       `).join('');
+    }
+
+    function renderKillButton(run) {
+      const button = byId('kill-button');
+      const pid = run?.pid;
+      const status = run?.status || '';
+      const blocking = Array.isArray(run?.other_runners) && run.other_runners.length > 0
+        ? String(run.other_runners[0]).match(/^\s*(\d+)\b/)
+        : null;
+      const blockingPid = blocking ? blocking[1] : null;
+      const killable = Number.isInteger(Number(pid)) && !['done', 'failed', 'shutdown'].includes(status);
+
+      if (status === 'skipped' && blockingPid) {
+        button.disabled = false;
+        button.textContent = `Kill Blocking PID ${blockingPid}`;
+        return;
+      }
+
+      if (killable) {
+        button.disabled = false;
+        button.textContent = `Kill PID ${pid}`;
+        return;
+      }
+
+      button.disabled = true;
+      if (pid) {
+        button.textContent = `No Kill: PID ${pid} ${status}`.trim();
+      } else {
+        button.textContent = 'No Active Run';
+      }
     }
 
     function renderEvents(rows) {
@@ -418,6 +493,7 @@
         ['latest log', data.latest_log_stem]
       ]);
 
+      renderKillButton(run);
       renderControls(data.controls || {});
       renderFiles(byId('out-files'), data.out_files);
       renderFiles(byId('diary-files'), data.diary_files);
@@ -455,7 +531,12 @@
       try {
         const payload = {
           pipeline: byId('pipeline-select').value,
-          story_id: byId('story-select').value
+          story_id: byId('story-select').value,
+          scene: byId('scene-select').value,
+          arrival: byId('arrival-select').value,
+          disturbance: byId('disturbance-select').value,
+          reflection: byId('reflection-select').value,
+          realization: byId('realization-select').value
         };
         const res = await fetch('/api/launch', {
           method: 'POST',
@@ -477,6 +558,24 @@
       }
     }
 
+    async function killPipeline() {
+      const result = byId('launch-result');
+      try {
+        const res = await fetch('/api/kill', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' }
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) {
+          throw new Error(data.error || 'kill failed');
+        }
+        result.textContent = `kill requested for pid ${data.pid}`;
+        await refresh();
+      } catch (err) {
+        result.textContent = String(err.message || err);
+      }
+    }
+
     refresh().catch(console.error);
     setInterval(() => refresh().catch(console.error), 2000);
     byId('pipeline-select').addEventListener('change', () => {
@@ -485,8 +584,26 @@
     byId('story-select').addEventListener('change', () => {
       controlsDirty = true;
     });
+    byId('scene-select').addEventListener('change', () => {
+      controlsDirty = true;
+    });
+    byId('arrival-select').addEventListener('change', () => {
+      controlsDirty = true;
+    });
+    byId('disturbance-select').addEventListener('change', () => {
+      controlsDirty = true;
+    });
+    byId('reflection-select').addEventListener('change', () => {
+      controlsDirty = true;
+    });
+    byId('realization-select').addEventListener('change', () => {
+      controlsDirty = true;
+    });
     byId('launch-button').addEventListener('click', () => {
       launchPipeline().catch(console.error);
+    });
+    byId('kill-button').addEventListener('click', () => {
+      killPipeline().catch(console.error);
     });
     byId('file-modal-close').addEventListener('click', closeFileModal);
     byId('file-modal-shell').addEventListener('click', (event) => {
