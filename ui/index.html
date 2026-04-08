@@ -123,12 +123,98 @@
       gap: 6px;
       font-size: 14px;
     }
+    .files .stale {
+      color: #9a9a9a;
+    }
+    .files .fresh {
+      color: var(--ink);
+    }
+    .file.clickable {
+      cursor: pointer;
+    }
+    .controls {
+      display: grid;
+      gap: 12px;
+    }
+    .controls label {
+      display: grid;
+      gap: 6px;
+      font-size: 14px;
+      color: var(--muted);
+    }
+    .controls select, .controls button {
+      font: 14px var(--sans);
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid var(--line);
+      background: #fff;
+      color: var(--ink);
+    }
+    .controls button {
+      background: var(--accent);
+      color: #fff;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .controls button[disabled] {
+      opacity: 0.6;
+      cursor: wait;
+    }
+    .hint {
+      font-size: 13px;
+      color: var(--muted);
+    }
     .file {
       display: flex;
       justify-content: space-between;
       gap: 12px;
       border-bottom: 1px solid var(--line);
       padding-bottom: 6px;
+    }
+    .modal-shell {
+      position: fixed;
+      inset: 0;
+      background: rgba(18, 20, 18, 0.42);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      z-index: 50;
+    }
+    .modal-shell.open {
+      display: flex;
+    }
+    .modal {
+      width: min(1100px, 96vw);
+      max-height: 88vh;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      box-shadow: 0 16px 48px rgba(26, 28, 25, 0.22);
+      display: grid;
+      grid-template-rows: auto 1fr;
+      overflow: hidden;
+    }
+    .modal-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+      background: #f7f3ea;
+    }
+    .modal-close {
+      border: 1px solid var(--line);
+      background: #fff;
+      color: var(--ink);
+      border-radius: 10px;
+      padding: 8px 12px;
+      font: 14px var(--sans);
+      cursor: pointer;
+    }
+    .modal-body {
+      padding: 16px;
     }
     @media (max-width: 900px) {
       .grid { grid-template-columns: 1fr; }
@@ -150,6 +236,22 @@
       <section class="panel">
         <h2>Run</h2>
         <div id="run-kv" class="kv"></div>
+      </section>
+
+      <section class="panel">
+        <h2>Controls</h2>
+        <div class="controls">
+          <label>
+            Pipeline
+            <select id="pipeline-select"></select>
+          </label>
+          <label>
+            Diary Story
+            <select id="story-select"></select>
+          </label>
+          <button id="launch-button" type="button">Write Override And Run</button>
+          <div id="launch-result" class="hint mono"></div>
+        </div>
       </section>
 
       <section class="panel">
@@ -186,8 +288,40 @@
     </div>
   </div>
 
+  <div id="file-modal-shell" class="modal-shell">
+    <div class="modal">
+      <div class="modal-top">
+        <div>
+          <strong id="file-modal-title" class="mono"></strong>
+          <div id="file-modal-meta" class="mono hint"></div>
+        </div>
+        <button id="file-modal-close" class="modal-close" type="button">X</button>
+      </div>
+      <div class="modal-body">
+        <pre id="file-modal-text"></pre>
+      </div>
+    </div>
+  </div>
+
   <script>
     const byId = (id) => document.getElementById(id);
+    let launchBusy = false;
+    let controlsDirty = false;
+    let controlsInitialized = false;
+
+    function formatLocalTime(value) {
+      if (!value) return '';
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return value;
+      return date.toLocaleString(undefined, {
+        year: 'numeric',
+        month: 'short',
+        day: '2-digit',
+        hour: 'numeric',
+        minute: '2-digit',
+        second: '2-digit'
+      });
+    }
 
     function renderKV(target, rows) {
       target.innerHTML = rows.map(([k, v]) => `
@@ -202,11 +336,41 @@
         return;
       }
       target.innerHTML = files.map((f) => `
-        <div class="file">
-          <span class="mono">${f.name}</span>
-          <span class="mono">${f.size}</span>
+        <div class="file clickable ${f.is_fresh ? 'fresh' : 'stale'}" data-path="${f.path || ''}">
+          <span class="mono">${f.path || f.name}</span>
+          <span class="mono">${f.exists ? (f.size ?? '') : 'missing'}</span>
         </div>
       `).join('');
+
+      target.querySelectorAll('.file.clickable').forEach((node) => {
+        node.addEventListener('dblclick', () => {
+          const filePath = node.getAttribute('data-path');
+          if (filePath) openFileModal(filePath).catch(console.error);
+        });
+      });
+    }
+
+    function renderControls(controls) {
+      const pipelineSelect = byId('pipeline-select');
+      const storySelect = byId('story-select');
+      const pipelines = controls?.pipelines || [];
+      const storyIds = controls?.diary_story_ids || [];
+      const selectedPipeline = controls?.pipeline || '';
+      const selectedStory = controls?.story_id || '';
+
+      if (controlsDirty && controlsInitialized) {
+        return;
+      }
+
+      pipelineSelect.innerHTML = pipelines.map((name) => `
+        <option value="${name}" ${name === selectedPipeline ? 'selected' : ''}>${name}</option>
+      `).join('');
+
+      storySelect.innerHTML = storyIds.map((name) => `
+        <option value="${name}" ${name === selectedStory ? 'selected' : ''}>${name}</option>
+      `).join('');
+
+      controlsInitialized = true;
     }
 
     function renderSteps(rows) {
@@ -214,7 +378,7 @@
         <tr>
           <td class="mono">${row.step || ''}</td>
           <td>${row.status || ''}</td>
-          <td class="mono">${row.updated_at || row.finished_at || row.started_at || ''}</td>
+          <td class="mono">${formatLocalTime(row.updated_at || row.finished_at || row.started_at || '')}</td>
         </tr>
       `).join('');
     }
@@ -225,7 +389,7 @@
         <div class="event">
           <div class="top">
             <strong>${row.type || ''}:${row.phase || ''}</strong>
-            <span class="mono">${row.at || ''}</span>
+            <span class="mono">${formatLocalTime(row.at || '')}</span>
           </div>
           <div class="mono">${row.step || ''} ${row.artifact || row.key || ''}</div>
           <div class="mono">${row.artifact_detail || ''}</div>
@@ -246,14 +410,15 @@
       renderKV(byId('run-kv'), [
         ['pipeline', run.pipeline],
         ['status', run.status],
+        ['pid', run.pid],
         ['cwd', run.cwd],
-        ['started', run.started_at],
-        ['finished', run.finished_at],
+        ['started', formatLocalTime(run.started_at)],
+        ['finished', formatLocalTime(run.finished_at)],
         ['hh_mm', run.hh_mm],
-        ['logdir', run.logdir],
         ['latest log', data.latest_log_stem]
       ]);
 
+      renderControls(data.controls || {});
       renderFiles(byId('out-files'), data.out_files);
       renderFiles(byId('diary-files'), data.diary_files);
       renderSteps(data.steps);
@@ -262,8 +427,71 @@
       byId('latest-err').textContent = data.latest_err || '';
     }
 
+    function closeFileModal() {
+      byId('file-modal-shell').classList.remove('open');
+    }
+
+    async function openFileModal(filePath) {
+      const res = await fetch(`/api/file?path=${encodeURIComponent(filePath)}`, { cache: 'no-store' });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        throw new Error(data.error || 'file open failed');
+      }
+      const file = data.file || {};
+      byId('file-modal-title').textContent = file.path || '';
+      byId('file-modal-meta').textContent = `${file.size ?? 0} bytes  ${formatLocalTime(file.mtime || '')}`;
+      byId('file-modal-text').textContent = file.text || '';
+      byId('file-modal-shell').classList.add('open');
+    }
+
+    async function launchPipeline() {
+      if (launchBusy) return;
+      launchBusy = true;
+      const button = byId('launch-button');
+      const result = byId('launch-result');
+      button.disabled = true;
+      result.textContent = 'launching...';
+
+      try {
+        const payload = {
+          pipeline: byId('pipeline-select').value,
+          story_id: byId('story-select').value
+        };
+        const res = await fetch('/api/launch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) {
+          throw new Error(data.error || 'launch failed');
+        }
+        controlsDirty = false;
+        result.textContent = `pid ${data.pid}  pipeline ${data.override?.pipeline || ''}`;
+        await refresh();
+      } catch (err) {
+        result.textContent = String(err.message || err);
+      } finally {
+        launchBusy = false;
+        button.disabled = false;
+      }
+    }
+
     refresh().catch(console.error);
     setInterval(() => refresh().catch(console.error), 2000);
+    byId('pipeline-select').addEventListener('change', () => {
+      controlsDirty = true;
+    });
+    byId('story-select').addEventListener('change', () => {
+      controlsDirty = true;
+    });
+    byId('launch-button').addEventListener('click', () => {
+      launchPipeline().catch(console.error);
+    });
+    byId('file-modal-close').addEventListener('click', closeFileModal);
+    byId('file-modal-shell').addEventListener('click', (event) => {
+      if (event.target === byId('file-modal-shell')) closeFileModal();
+    });
   </script>
 </body>
 </html>

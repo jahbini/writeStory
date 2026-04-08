@@ -37,7 +37,13 @@ readArtifactTarget = (L, artifactKey) ->
   targetValue
 
 resolveRunTag = (L) ->
-  process.env.HH_MM ? L.theLowdown('env/HH_MM')?.value ? null
+  raw = process.env.HH_MM ? L.theLowdown('env/HH_MM')?.value ? null
+  return null unless raw?
+  text = String(raw).trim()
+  text = text.replace(/^"+|"+$/g, '')
+  text = text.replace(/^'+|'+$/g, '')
+  return null unless text.length
+  text
 
 @step =
   desc: "Generate a diary entry without the adapter"

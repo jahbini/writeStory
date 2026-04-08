@@ -2,9 +2,12 @@
 fs = require 'fs'
 path = require 'path'
 http = require 'http'
+yaml = require 'js-yaml'
+{ spawn } = require 'child_process'
 
 CWD = process.cwd()
 PORT = Number(process.env.UI_PORT ? 4311)
+RUNNER = path.join(CWD, 'pipeline_runner.coffee')
 
 readJson = (p, fallback = null) ->
   return fallback unless fs.existsSync(p)
@@ -13,6 +16,22 @@ readJson = (p, fallback = null) ->
 readText = (p, fallback = '') ->
   return fallback unless fs.existsSync(p)
   try fs.readFileSync(p, 'utf8') catch then fallback
+
+writeText = (p, text) ->
+  fs.mkdirSync path.dirname(p), { recursive: true }
+  fs.writeFileSync p, text, 'utf8'
+
+pad2 = (n) ->
+  text = String(Number(n) ? 0)
+  if text.length < 2 then "0#{text}" else text
+
+buildRunTag = ->
+  now = new Date()
+  hhmm = "#{pad2(now.getHours())}_#{pad2(now.getMinutes())}"
+  {
+    hh_mm: hhmm
+    logdir: "pipe_#{hhmm}"
+  }
 
 tailText = (p, maxLines = 120) ->
   text = readText(p, '')
@@ -66,8 +85,97 @@ collectStepStates = ->
   rows.sort (a, b) ->
     String(a.step ? '').localeCompare String(b.step ? '')
 
+readOverride = ->
+  overridePath = path.join(CWD, 'override.yaml')
+  return {} unless fs.existsSync overridePath
+  try yaml.load(fs.readFileSync(overridePath, 'utf8')) ? {} catch then {}
+
+readYaml = (p) ->
+  return {} unless fs.existsSync p
+  try yaml.load(fs.readFileSync(p, 'utf8')) ? {} catch then {}
+
+buildControls = ->
+  override = readOverride()
+  {
+    pipeline: override.pipeline ? ''
+    story_id: override?.select_story_recipe?.story_id ? ''
+    pipelines: [
+      'base_ite'
+      'oracle_ite'
+      'lora_ite'
+      'diary_ite'
+      'story_scan'
+      'lora_scan'
+    ]
+    diary_story_ids: [
+      'jim_0001'
+      'jim_0002'
+      'jim_0003'
+    ]
+  }
+
+describeOutputFile = (relativePath, runStart = null) ->
+  fullPath = path.join(CWD, relativePath)
+  exists = fs.existsSync(fullPath)
+  stat = if exists then fs.statSync(fullPath) else null
+  mtime = if stat? then stat.mtime.toISOString() else null
+  fresh = false
+  if stat? and runStart?
+    started = new Date(runStart)
+    fresh = not Number.isNaN(started.getTime()) and stat.mtime.getTime() >= started.getTime()
+
+  {
+    name: path.basename(relativePath)
+    path: relativePath
+    exists: exists
+    size: stat?.size ? null
+    mtime: mtime
+    is_fresh: fresh
+  }
+
+collectExpectedOutputs = (run) ->
+  override = readOverride()
+  pipeline = override.pipeline ? run?.pipeline ? null
+  return { out_files: [], diary_files: [] } unless pipeline?
+
+  configPath = path.join(CWD, 'config', "#{pipeline}.yaml")
+  recipe = readYaml(configPath)
+  artifacts = recipe?.artifacts ? {}
+  runStart = run?.started_at ? null
+
+  outFiles = []
+  diaryFiles = []
+  seen = new Set()
+
+  for own artifactKey, spec of artifacts
+    continue unless spec? and typeof spec is 'object' and typeof spec.target is 'string'
+    target = String(spec.target)
+    continue if seen.has(target)
+    seen.add target
+    row = describeOutputFile target, runStart
+    if /^diary\//.test(target)
+      diaryFiles.push row
+    else
+      outFiles.push row
+
+  if pipeline is 'diary_ite' and run?.hh_mm?
+    diaryBase = "diary/diary_#{run.hh_mm}.txt"
+    diaryAdapter = "diary/diary_#{run.hh_mm}.adapter.txt"
+    for target in [diaryBase, diaryAdapter] when not seen.has(target)
+      seen.add target
+      diaryFiles.push describeOutputFile target, runStart
+
+  outFiles.sort (a, b) -> String(a.path).localeCompare String(b.path)
+  diaryFiles.sort (a, b) -> String(a.path).localeCompare String(b.path)
+
+  {
+    out_files: outFiles
+    diary_files: diaryFiles
+  }
+
 buildStatus = ->
   run = readJson path.join(CWD, 'state', 'ui-run.json'), {}
+  expectedOutputs = collectExpectedOutputs(run)
   events = readJsonlTail path.join(CWD, 'state', 'ui-events.jsonl')
   steps = collectStepStates()
   stem = latestLogStem()
@@ -76,13 +184,33 @@ buildStatus = ->
 
   {
     run: run
+    controls: buildControls()
     steps: steps
     events: events
     latest_log_stem: stem
     latest_log: latestLog
     latest_err: latestErr
-    out_files: listFiles path.join(CWD, 'out')
-    diary_files: listFiles path.join(CWD, 'diary')
+    out_files: expectedOutputs.out_files
+    diary_files: expectedOutputs.diary_files
+  }
+
+isAllowedFilePath = (relativePath) ->
+  return false unless typeof relativePath is 'string' and relativePath.length
+  normalized = path.normalize(relativePath)
+  return false if normalized.startsWith('..') or path.isAbsolute(normalized)
+  /^logs\//.test(normalized) or /^out\//.test(normalized) or /^diary\//.test(normalized)
+
+readViewerFile = (relativePath) ->
+  return null unless isAllowedFilePath(relativePath)
+  fullPath = path.join(CWD, relativePath)
+  return null unless fs.existsSync(fullPath)
+  stat = fs.statSync(fullPath)
+  return null unless stat.isFile()
+  {
+    path: relativePath
+    size: stat.size
+    mtime: stat.mtime.toISOString()
+    text: readText(fullPath, '')
   }
 
 sendJson = (res, code, payload) ->
@@ -105,12 +233,117 @@ sendHtml = (res, p) ->
     'Cache-Control': 'no-store'
   res.end body
 
+readRequestBody = (req) ->
+  new Promise (resolve, reject) ->
+    chunks = []
+    req.on 'data', (chunk) -> chunks.push chunk
+    req.on 'end', ->
+      text = Buffer.concat(chunks).toString('utf8')
+      resolve text
+    req.on 'error', reject
+
+clearStepState = ->
+  stateDir = path.join(CWD, 'state')
+  return unless fs.existsSync stateDir
+  for name in fs.readdirSync(stateDir) when /^step-.*\.json$/.test(name) or /^ui-.*\.(json|jsonl)$/.test(name)
+    fs.unlinkSync path.join(stateDir, name)
+
+  pipelinePath = path.join(CWD, 'pipeline.json')
+  fs.unlinkSync(pipelinePath) if fs.existsSync(pipelinePath)
+
+seedUiRun = (launch, override) ->
+  runPath = path.join(CWD, 'state', 'ui-run.json')
+  current = readJson(runPath, {})
+  current = {} unless current? and typeof current is 'object' and not Array.isArray(current)
+
+  seeded =
+    pipeline: current.pipeline ? override.pipeline ? null
+    pid: current.pid ? launch.pid
+    cwd: current.cwd ? CWD
+    hh_mm: current.hh_mm ? launch.hh_mm
+    logdir: current.logdir ? launch.logdir
+    status: current.status ? 'launching'
+    started_at: current.started_at ? new Date().toISOString()
+    finished_at: current.finished_at ? null
+
+  writeText runPath, JSON.stringify(seeded, null, 2)
+
+writeOverride = (payload) ->
+  override = readOverride()
+  override.pipeline = String(payload.pipeline ? override.pipeline ? '')
+
+  if payload.story_id?
+    override.select_story_recipe ?= {}
+    override.select_story_recipe.story_id = String(payload.story_id)
+
+  text = yaml.dump override,
+    lineWidth: 120
+    noRefs: true
+  writeText path.join(CWD, 'override.yaml'), text
+  override
+
+startRunner = ->
+  runTag = buildRunTag()
+  logDir = path.join(CWD, 'logs')
+  fs.mkdirSync logDir, { recursive: true }
+  outFd = fs.openSync path.join(logDir, "#{runTag.logdir}.log"), 'a'
+  errFd = fs.openSync path.join(logDir, "#{runTag.logdir}.err"), 'a'
+
+  child = spawn 'coffee', [RUNNER],
+    cwd: CWD
+    detached: true
+    stdio: ['ignore', outFd, errFd]
+    env: Object.assign {}, process.env,
+      HH_MM: runTag.hh_mm
+      LOGDIR: runTag.logdir
+
+  child.unref()
+  {
+    pid: child.pid
+    hh_mm: runTag.hh_mm
+    logdir: runTag.logdir
+  }
+
+handleLaunch = (req, res) ->
+  bodyText = await readRequestBody req
+  payload = {}
+  try
+    payload = JSON.parse(bodyText ? '{}')
+  catch
+    return sendJson res, 400, { ok: false, error: 'invalid json body' }
+
+  pipeline = String(payload.pipeline ? '').trim()
+  return sendJson(res, 400, { ok: false, error: 'pipeline is required' }) unless pipeline.length
+
+  override = writeOverride payload
+  clearStepState()
+  launch = startRunner()
+  seedUiRun launch, override
+
+  sendJson res, 200,
+    ok: true
+    pid: launch.pid
+    hh_mm: launch.hh_mm
+    logdir: launch.logdir
+    override: override
+
 server = http.createServer (req, res) ->
   url = req.url ? '/'
   if url is '/' or url is '/index.html'
     return sendHtml res, path.join(CWD, 'ui', 'index.html')
   if url is '/api/status'
     return sendJson res, 200, buildStatus()
+  if url.startsWith('/api/file?')
+    query = new URL(url, 'http://127.0.0.1').searchParams
+    relativePath = query.get('path')
+    payload = readViewerFile(relativePath)
+    return sendJson(res, 404, { ok: false, error: 'file not found' }) unless payload?
+    return sendJson res, 200, { ok: true, file: payload }
+  if url is '/api/launch' and req.method is 'POST'
+    return Promise.resolve(handleLaunch(req, res)).catch (err) ->
+      sendJson res, 500,
+        ok: false
+        error: String(err?.message ? err)
   res.writeHead 404, 'Content-Type': 'text/plain; charset=utf-8'
   res.end 'not found'
 

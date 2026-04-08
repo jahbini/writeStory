@@ -96,8 +96,9 @@ summarizeValue = (value) ->
   summary
 
 createUiRecorder = (memo, stateDir) ->
-  eventsKey = path.join(stateDir, 'ui-events.jsonl')
-  runKey = path.join(stateDir, 'ui-run.json')
+  relativeDir = path.relative(CWD, stateDir) or 'state'
+  eventsKey = path.join(relativeDir, 'ui-events.jsonl')
+  runKey = path.join(relativeDir, 'ui-run.json')
 
   recorder =
     reset: ->
@@ -791,6 +792,7 @@ main = ->
   experiment = createExperimentObject configPath, overridePath
   U.saveRun
     pipeline: override.pipeline
+    pid: process.pid
     cwd: CWD
     exec: EXEC
     hh_mm: process.env.HH_MM ? null
