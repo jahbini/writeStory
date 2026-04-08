@@ -346,6 +346,8 @@ startRunner = ->
     detached: true
     stdio: ['ignore', outFd, errFd]
     env: Object.assign {}, process.env,
+      EXEC: CWD
+      PWD: CWD
       HH_MM: runTag.hh_mm
       LOGDIR: runTag.logdir
 
