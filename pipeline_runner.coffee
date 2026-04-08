@@ -815,7 +815,7 @@ main = ->
     logdir: process.env.LOGDIR ? null
     started_at: new Date().toISOString()
     status: 'running'
-  if experiment.run.model && experiment.run.loraLand
+  if experiment.run?.model and experiment.run?.loraLand
     modelDirName = experiment.run.model.replace /\//g, '--'
     targetDir    = path.resolve experiment.run.loraLand, modelDirName
     M.saveThis 'modelDir', targetDir

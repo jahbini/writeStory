@@ -309,18 +309,20 @@ writeOverride = (payload) ->
   override = readOverride()
   override.pipeline = String(payload.pipeline ? override.pipeline ? '')
 
-  override.select_story_recipe ?= {}
+  if override.pipeline is 'diary_ite'
+    override.select_story_recipe ?= {}
 
-  if payload.story_id?
+  if override.pipeline is 'diary_ite' and payload.story_id?
     override.select_story_recipe.story_id = String(payload.story_id)
 
-  for key in ['scene', 'arrival', 'disturbance', 'reflection', 'realization']
-    if payload[key]?
-      value = String(payload[key]).trim()
-      if value.length
-        override.select_story_recipe[key] = value
-      else
-        delete override.select_story_recipe[key]
+  if override.pipeline is 'diary_ite'
+    for key in ['scene', 'arrival', 'disturbance', 'reflection', 'realization']
+      if payload[key]?
+        value = String(payload[key]).trim()
+        if value.length
+          override.select_story_recipe[key] = value
+        else
+          delete override.select_story_recipe[key]
 
   text = yaml.dump override,
     lineWidth: 120
