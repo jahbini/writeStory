@@ -142,6 +142,18 @@
       font-size: 14px;
       color: var(--muted);
     }
+    .controls .checkbox-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 14px;
+      color: var(--ink);
+    }
+    .controls label.inline {
+      grid-template-columns: auto 1fr;
+      align-items: center;
+      gap: 10px;
+    }
     .controls select, .controls button {
       font: 14px var(--sans);
       padding: 10px 12px;
@@ -269,6 +281,10 @@
             Realization
             <select id="realization-select"></select>
           </label>
+          <label class="checkbox-row">
+            <input id="continuous-checkbox" type="checkbox">
+            <span>Restart after 60 second cooldown until pipeline shutdown</span>
+          </label>
           <button id="launch-button" type="button">Write Override And Run</button>
           <button id="kill-button" type="button">Kill Run</button>
           <div id="launch-result" class="hint mono"></div>
@@ -290,11 +306,6 @@
           </thead>
           <tbody id="steps-body"></tbody>
         </table>
-      </section>
-
-      <section class="panel">
-        <h2>Recent Events</h2>
-        <div id="events" class="events"></div>
       </section>
 
       <section class="panel">
@@ -458,18 +469,10 @@
       }
     }
 
-    function renderEvents(rows) {
-      const items = (rows || []).slice().reverse();
-      byId('events').innerHTML = items.map((row) => `
-        <div class="event">
-          <div class="top">
-            <strong>${row.type || ''}:${row.phase || ''}</strong>
-            <span class="mono">${formatLocalTime(row.at || '')}</span>
-          </div>
-          <div class="mono">${row.step || ''} ${row.artifact || row.key || ''}</div>
-          <div class="mono">${row.artifact_detail || ''}</div>
-        </div>
-      `).join('');
+    function renderContinuous(run) {
+      const box = byId('continuous-checkbox');
+      if (controlsDirty) return;
+      box.checked = run?.loop_enabled === true;
     }
 
     async function refresh() {
@@ -490,15 +493,16 @@
         ['started', formatLocalTime(run.started_at)],
         ['finished', formatLocalTime(run.finished_at)],
         ['hh_mm', run.hh_mm],
+        ['countdown', run.countdown_seconds ?? ''],
         ['latest log', data.latest_log_stem]
       ]);
 
       renderKillButton(run);
+      renderContinuous(run);
       renderControls(data.controls || {});
       renderFiles(byId('out-files'), data.out_files);
       renderFiles(byId('diary-files'), data.diary_files);
       renderSteps(data.steps);
-      renderEvents(data.events);
       byId('latest-log').textContent = data.latest_log || '';
       byId('latest-err').textContent = data.latest_err || '';
     }
@@ -523,10 +527,12 @@
     async function launchPipeline() {
       if (launchBusy) return;
       launchBusy = true;
-      const button = byId('launch-button');
+      const launchButton = byId('launch-button');
       const result = byId('launch-result');
-      button.disabled = true;
+      launchButton.disabled = true;
       result.textContent = 'launching...';
+      byId('latest-log').textContent = '';
+      byId('latest-err').textContent = '';
 
       try {
         const payload = {
@@ -536,7 +542,8 @@
           arrival: byId('arrival-select').value,
           disturbance: byId('disturbance-select').value,
           reflection: byId('reflection-select').value,
-          realization: byId('realization-select').value
+          realization: byId('realization-select').value,
+          continuous: byId('continuous-checkbox').checked
         };
         const res = await fetch('/api/launch', {
           method: 'POST',
@@ -554,7 +561,7 @@
         result.textContent = String(err.message || err);
       } finally {
         launchBusy = false;
-        button.disabled = false;
+        launchButton.disabled = false;
       }
     }
 
@@ -597,6 +604,9 @@
       controlsDirty = true;
     });
     byId('realization-select').addEventListener('change', () => {
+      controlsDirty = true;
+    });
+    byId('continuous-checkbox').addEventListener('change', () => {
       controlsDirty = true;
     });
     byId('launch-button').addEventListener('click', () => {

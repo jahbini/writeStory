@@ -9,6 +9,11 @@ CWD = process.cwd()
 PORT = Number(process.env.UI_PORT ? 4311)
 RUNNER = path.join(CWD, 'pipeline_runner.coffee')
 EXEC_ROOT = path.dirname(RUNNER)
+repeatLoop =
+  enabled: false
+  payload: null
+  timer: null
+  next_launch_at: null
 
 readJson = (p, fallback = null) ->
   return fallback unless fs.existsSync(p)
@@ -21,6 +26,14 @@ readText = (p, fallback = '') ->
 writeText = (p, text) ->
   fs.mkdirSync path.dirname(p), { recursive: true }
   fs.writeFileSync p, text, 'utf8'
+
+writeUiRunPatch = (patch) ->
+  runPath = path.join(CWD, 'state', 'ui-run.json')
+  current = readJson(runPath, {})
+  current = {} unless current? and typeof current is 'object' and not Array.isArray(current)
+  next = Object.assign {}, current, patch
+  writeText runPath, JSON.stringify(next, null, 2)
+  next
 
 pad2 = (n) ->
   text = String(Number(n) ? 0)
@@ -222,7 +235,7 @@ isAllowedFilePath = (relativePath) ->
   return false unless typeof relativePath is 'string' and relativePath.length
   normalized = path.normalize(relativePath)
   return false if normalized.startsWith('..') or path.isAbsolute(normalized)
-  /^logs\//.test(normalized) or /^out\//.test(normalized) or /^diary\//.test(normalized)
+  /^logs\//.test(normalized) or /^out\//.test(normalized) or /^diary\//.test(normalized) or /^build\//.test(normalized)
 
 readViewerFile = (relativePath) ->
   return null unless isAllowedFilePath(relativePath)
@@ -306,6 +319,55 @@ markUiRunExited = (launch, patch = {}) ->
 
   writeText runPath, JSON.stringify(next, null, 2)
 
+stopRepeatLoop = ->
+  if repeatLoop.timer?
+    clearTimeout repeatLoop.timer
+  repeatLoop.enabled = false
+  repeatLoop.payload = null
+  repeatLoop.timer = null
+  repeatLoop.next_launch_at = null
+
+scheduleRepeatLaunch = ->
+  return unless repeatLoop.enabled and repeatLoop.payload?
+
+  pipelineState = readJson path.join(CWD, 'pipeline.json'), null
+  if pipelineState?.status is 'shutdown'
+    stopRepeatLoop()
+    writeUiRunPatch
+      loop_enabled: false
+      countdown_seconds: null
+      next_launch_at: null
+    return
+
+  delayMs = 60 * 1000
+  repeatLoop.next_launch_at = new Date(Date.now() + delayMs).toISOString()
+  writeUiRunPatch
+    status: 'cooldown'
+    loop_enabled: true
+    countdown_seconds: 60
+    next_launch_at: repeatLoop.next_launch_at
+
+  repeatLoop.timer = setTimeout ->
+    return unless repeatLoop.enabled and repeatLoop.payload?
+    pipelineStateNow = readJson path.join(CWD, 'pipeline.json'), null
+    if pipelineStateNow?.status is 'shutdown'
+      stopRepeatLoop()
+      writeUiRunPatch
+        loop_enabled: false
+        countdown_seconds: null
+        next_launch_at: null
+      return
+
+    override = writeOverride repeatLoop.payload
+    clearStepState()
+    launch = startRunner()
+    seedUiRun launch, override
+    writeUiRunPatch
+      loop_enabled: true
+      countdown_seconds: null
+      next_launch_at: null
+  , delayMs
+
 writeOverride = (payload) ->
   override = readOverride()
   override.pipeline = String(payload.pipeline ? override.pipeline ? '')
@@ -373,6 +435,16 @@ startRunner = ->
       exit_code: code
       signal: signal ? null
 
+    if repeatLoop.enabled
+      if status is 'done'
+        scheduleRepeatLaunch()
+      else
+        stopRepeatLoop()
+        writeUiRunPatch
+          loop_enabled: false
+          countdown_seconds: null
+          next_launch_at: null
+
   {
     pid: child.pid
     hh_mm: runTag.hh_mm
@@ -390,10 +462,20 @@ handleLaunch = (req, res) ->
   pipeline = String(payload.pipeline ? '').trim()
   return sendJson(res, 400, { ok: false, error: 'pipeline is required' }) unless pipeline.length
 
+  if payload.continuous is true
+    repeatLoop.enabled = true
+    repeatLoop.payload = Object.assign {}, payload
+  else
+    stopRepeatLoop()
+
   override = writeOverride payload
   clearStepState()
   launch = startRunner()
   seedUiRun launch, override
+  writeUiRunPatch
+    loop_enabled: repeatLoop.enabled
+    countdown_seconds: null
+    next_launch_at: null
 
   sendJson res, 200,
     ok: true
@@ -403,6 +485,7 @@ handleLaunch = (req, res) ->
     override: override
 
 handleKill = (req, res) ->
+  stopRepeatLoop()
   runPath = path.join(CWD, 'state', 'ui-run.json')
   run = readJson(runPath, {})
   pid = Number(run?.pid ? 0)
@@ -427,6 +510,9 @@ handleKill = (req, res) ->
   next = Object.assign {}, run,
     status: 'killing'
     kill_requested_at: new Date().toISOString()
+    loop_enabled: false
+    countdown_seconds: null
+    next_launch_at: null
   writeText runPath, JSON.stringify(next, null, 2)
 
   sendJson res, 200,
@@ -461,3 +547,15 @@ server = http.createServer (req, res) ->
 
 server.listen PORT, '127.0.0.1', ->
   console.log "[ui_server] listening on http://127.0.0.1:#{PORT}"
+
+setInterval ->
+  return unless repeatLoop.enabled and repeatLoop.next_launch_at?
+  run = readJson path.join(CWD, 'state', 'ui-run.json'), {}
+  return unless run?.status is 'cooldown'
+  remainingMs = Math.max(0, new Date(repeatLoop.next_launch_at).getTime() - Date.now())
+  seconds = Math.ceil(remainingMs / 1000)
+  writeUiRunPatch
+    loop_enabled: true
+    countdown_seconds: seconds
+    next_launch_at: repeatLoop.next_launch_at
+, 1000
