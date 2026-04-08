@@ -8,6 +8,7 @@ yaml = require 'js-yaml'
 CWD = process.cwd()
 PORT = Number(process.env.UI_PORT ? 4311)
 RUNNER = path.join(CWD, 'pipeline_runner.coffee')
+EXEC_ROOT = path.dirname(RUNNER)
 
 readJson = (p, fallback = null) ->
   return fallback unless fs.existsSync(p)
@@ -346,7 +347,7 @@ startRunner = ->
     detached: true
     stdio: ['ignore', outFd, errFd]
     env: Object.assign {}, process.env,
-      EXEC: CWD
+      EXEC: EXEC_ROOT
       PWD: CWD
       HH_MM: runTag.hh_mm
       LOGDIR: runTag.logdir
