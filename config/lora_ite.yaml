@@ -47,8 +47,8 @@ run_lora_train_ite:
   resume_adapter_file: build/adapter/adapters.safetensors
   mlx:
     batch-size: 1
-    iters: 200
-    max-seq-length: 1024
+    iters: 20
+    max-seq-length: 2048
     learning-rate: 0.00005
 
 record_lora_training_ite:
