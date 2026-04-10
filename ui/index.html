@@ -281,30 +281,10 @@
             Pipeline
             <select id="pipeline-select"></select>
           </label>
-          <label>
-            Diary Story
-            <select id="story-select"></select>
-          </label>
-          <label>
-            Scene
-            <select id="scene-select"></select>
-          </label>
-          <label>
-            Arrival
-            <select id="arrival-select"></select>
-          </label>
-          <label>
-            Disturbance
-            <select id="disturbance-select"></select>
-          </label>
-          <label>
-            Reflection
-            <select id="reflection-select"></select>
-          </label>
-          <label>
-            Realization
-            <select id="realization-select"></select>
-          </label>
+          <div>
+            <div class="hint" style="margin-bottom:6px;">Recipe UI Fields</div>
+            <div id="ui-fields" class="controls"></div>
+          </div>
           <label class="checkbox-row">
             <input id="continuous-checkbox" type="checkbox">
             <span>Restart after 60 second cooldown until pipeline shutdown</span>
@@ -391,6 +371,17 @@
     let manualOverrideDirty = false;
     let saveTimer = null;
 
+    function uiEditorHasFocus() {
+      const active = document.activeElement;
+      if (!active) return false;
+      if (active === byId('override-editor')) return true;
+      if (active === byId('pipeline-select')) return true;
+      if (active === byId('continuous-checkbox')) return true;
+      if (active.classList?.contains('ui-dropdown')) return true;
+      if (active.classList?.contains('ui-checkbox')) return true;
+      return false;
+    }
+
     function formatLocalTime(value) {
       if (!value) return '';
       const date = new Date(value);
@@ -434,49 +425,65 @@
 
     function renderControls(controls) {
       const pipelineSelect = byId('pipeline-select');
-      const storySelect = byId('story-select');
-      const sceneSelect = byId('scene-select');
-      const arrivalSelect = byId('arrival-select');
-      const disturbanceSelect = byId('disturbance-select');
-      const reflectionSelect = byId('reflection-select');
-      const realizationSelect = byId('realization-select');
       const pipelines = controls?.pipelines || [];
-      const storyIds = controls?.diary_story_ids || [];
       const selectedPipeline = controls?.pipeline || '';
-      const selectedStory = controls?.story_id || '';
-      const selectedScene = controls?.scene || '';
-      const selectedArrival = controls?.arrival || '';
-      const selectedDisturbance = controls?.disturbance || '';
-      const selectedReflection = controls?.reflection || '';
-      const selectedRealization = controls?.realization || '';
+      const uiFields = controls?.ui_fields || [];
+      const uiTarget = byId('ui-fields');
 
-      if (controlsDirty && controlsInitialized) {
+      if ((controlsDirty || uiEditorHasFocus()) && controlsInitialized) {
         return;
       }
-
-      const renderOptionList = (selectEl, rows, selectedValue) => {
-        const base = ['<option value="">(default from story)</option>'];
-        const items = (rows || []).map((row) => `
-          <option value="${row.key}" ${row.key === selectedValue ? 'selected' : ''}>${row.label}</option>
-        `);
-        selectEl.innerHTML = base.concat(items).join('');
-      };
 
       pipelineSelect.innerHTML = pipelines.map((name) => `
         <option value="${name}" ${name === selectedPipeline ? 'selected' : ''}>${name}</option>
       `).join('');
+      uiTarget.innerHTML = uiFields.map((field) => {
+        if (field.type === 'checkbox') {
+          return `
+            <label class="checkbox-row">
+              <input type="checkbox" class="ui-checkbox" data-path="${field.path}" ${field.value ? 'checked' : ''}>
+              <span class="mono">${field.label}</span>
+            </label>
+          `;
+        }
+        if (field.type === 'dropdown') {
+          const base = [`<option value="" ${!field.value ? 'selected' : ''}>(default)</option>`];
+          const options = (field.options || []).map((row) => `
+            <option value="${row.key}" ${row.key === field.value ? 'selected' : ''}>${row.label}</option>
+          `);
+          return `
+            <label>
+              ${field.label}
+              <select class="ui-dropdown" data-path="${field.path}" data-current-value="${field.value || ''}">
+                ${base.concat(options).join('')}
+              </select>
+            </label>
+          `;
+        }
+        return '';
+      }).join('');
 
-      storySelect.innerHTML = storyIds.map((name) => `
-        <option value="${name}" ${name === selectedStory ? 'selected' : ''}>${name}</option>
-      `).join('');
-
-      renderOptionList(sceneSelect, controls?.scene_options, selectedScene);
-      renderOptionList(arrivalSelect, controls?.arrival_options, selectedArrival);
-      renderOptionList(disturbanceSelect, controls?.disturbance_options, selectedDisturbance);
-      renderOptionList(reflectionSelect, controls?.reflection_options, selectedReflection);
-      renderOptionList(realizationSelect, controls?.realization_options, selectedRealization);
+      uiTarget.querySelectorAll('.ui-dropdown').forEach((node) => {
+        const currentValue = node.getAttribute('data-current-value') || '';
+        node.value = currentValue;
+      });
 
       controlsInitialized = true;
+    }
+
+    function collectUiValues() {
+      const rows = {};
+      document.querySelectorAll('.ui-checkbox').forEach((node) => {
+        const path = node.getAttribute('data-path');
+        if (!path) return;
+        rows[path] = node.checked;
+      });
+      document.querySelectorAll('.ui-dropdown').forEach((node) => {
+        const path = node.getAttribute('data-path');
+        if (!path) return;
+        rows[path] = node.value;
+      });
+      return rows;
     }
 
     function renderOverrideEditor(controls) {
@@ -485,7 +492,7 @@
       const recipeText = typeof controls?.recipe_text === 'string' ? controls.recipe_text : '';
       const text = typeof controls?.override_text === 'string' ? controls.override_text : '';
       recipeViewer.value = recipeText;
-      if (overrideDirty && overrideInitialized) {
+      if ((overrideDirty || uiEditorHasFocus()) && overrideInitialized) {
         return;
       }
       editor.value = text;
@@ -606,12 +613,7 @@
       try {
         const payload = {
           pipeline: byId('pipeline-select').value,
-          story_id: byId('story-select').value,
-          scene: byId('scene-select').value,
-          arrival: byId('arrival-select').value,
-          disturbance: byId('disturbance-select').value,
-          reflection: byId('reflection-select').value,
-          realization: byId('realization-select').value,
+          ui_values: collectUiValues(),
           continuous: byId('continuous-checkbox').checked,
           override_text: byId('override-editor').value
         };
@@ -641,12 +643,7 @@
     async function saveControlState() {
       const payload = {
         pipeline: byId('pipeline-select').value,
-        story_id: byId('story-select').value,
-        scene: byId('scene-select').value,
-        arrival: byId('arrival-select').value,
-        disturbance: byId('disturbance-select').value,
-        reflection: byId('reflection-select').value,
-        realization: byId('realization-select').value,
+        ui_values: collectUiValues(),
         continuous: byId('continuous-checkbox').checked
       };
 
@@ -663,6 +660,48 @@
       if (!res.ok || !data.ok) {
         throw new Error(data.error || 'control save failed');
       }
+      controlsDirty = false;
+      overrideDirty = false;
+      if (manualOverrideDirty) {
+        byId('override-status').textContent = 'queued manual override for next run';
+      } else {
+        byId('override-status').textContent = 'queued for next run';
+      }
+    }
+
+    async function saveSingleUiField(node) {
+      const path = node.getAttribute('data-path');
+      if (!path) return;
+
+      let value = '';
+      if (node.classList.contains('ui-checkbox')) {
+        value = node.checked;
+      } else {
+        value = node.value;
+      }
+
+      const payload = {
+        pipeline: byId('pipeline-select').value,
+        ui_values: {
+          [path]: value
+        },
+        continuous: byId('continuous-checkbox').checked
+      };
+
+      if (manualOverrideDirty) {
+        payload.override_text = byId('override-editor').value;
+      }
+
+      const res = await fetch('/api/control', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        throw new Error(data.error || 'single control save failed');
+      }
+
       controlsDirty = false;
       overrideDirty = false;
       if (manualOverrideDirty) {
@@ -706,39 +745,19 @@
       if (!manualOverrideDirty) overrideDirty = false;
       scheduleControlSave();
     });
-    byId('story-select').addEventListener('change', () => {
-      controlsDirty = true;
-      if (!manualOverrideDirty) overrideDirty = false;
-      scheduleControlSave();
-    });
-    byId('scene-select').addEventListener('change', () => {
-      controlsDirty = true;
-      if (!manualOverrideDirty) overrideDirty = false;
-      scheduleControlSave();
-    });
-    byId('arrival-select').addEventListener('change', () => {
-      controlsDirty = true;
-      if (!manualOverrideDirty) overrideDirty = false;
-      scheduleControlSave();
-    });
-    byId('disturbance-select').addEventListener('change', () => {
-      controlsDirty = true;
-      if (!manualOverrideDirty) overrideDirty = false;
-      scheduleControlSave();
-    });
-    byId('reflection-select').addEventListener('change', () => {
-      controlsDirty = true;
-      if (!manualOverrideDirty) overrideDirty = false;
-      scheduleControlSave();
-    });
-    byId('realization-select').addEventListener('change', () => {
-      controlsDirty = true;
-      if (!manualOverrideDirty) overrideDirty = false;
-      scheduleControlSave();
-    });
     byId('continuous-checkbox').addEventListener('change', () => {
       controlsDirty = true;
       scheduleControlSave();
+    });
+    document.addEventListener('change', (event) => {
+      if (!event.target.classList.contains('ui-checkbox') && !event.target.classList.contains('ui-dropdown')) return;
+      controlsDirty = true;
+      manualOverrideDirty = false;
+      overrideDirty = false;
+      byId('override-status').textContent = 'rebuilding override from recipe UI fields...';
+      saveSingleUiField(event.target).catch((err) => {
+        byId('override-status').textContent = String(err.message || err);
+      });
     });
     byId('override-editor').addEventListener('input', () => {
       controlsDirty = true;

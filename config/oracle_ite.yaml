@@ -4,9 +4,6 @@ run:
   data_dir: data
   training_dir: build/train
   loraLand: build/model
-  debug_s: false
-  debug_mlx: false
-  debug_sql: false
 
 artifacts:
   new_story_ids:
@@ -18,12 +15,14 @@ artifacts:
 
 download_model:
   run: story/hf_download.coffee
+  something: [UI_dropdown, data/jim_story_library.yaml/library/scenes ]
   depends_on: []
   needs: []
   makes: []
   loraLand: build/model
 
 quantize_model:
+  debug_s: true
   run: kag_oracle/quantize_model.coffee
   depends_on: [download_model]
   needs: []

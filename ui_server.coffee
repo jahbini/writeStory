@@ -53,6 +53,124 @@ dumpYaml = (value) ->
     lineWidth: 120
     noRefs: true
 
+getByPath = (root, dottedPath) ->
+  return undefined unless root? and typeof dottedPath is 'string' and dottedPath.length
+  node = root
+  for part in dottedPath.split('.')
+    return undefined unless node? and typeof node is 'object'
+    node = node[part]
+  node
+
+setByPath = (root, dottedPath, value) ->
+  return root unless root? and typeof root is 'object' and typeof dottedPath is 'string' and dottedPath.length
+  parts = dottedPath.split('.')
+  node = root
+  for part, index in parts
+    if index is parts.length - 1
+      node[part] = value
+    else
+      node[part] ?= {}
+      node = node[part]
+  root
+
+deleteByPath = (root, dottedPath) ->
+  return root unless root? and typeof root is 'object' and typeof dottedPath is 'string' and dottedPath.length
+  parts = dottedPath.split('.')
+  chain = []
+  node = root
+  for part in parts
+    return root unless node? and typeof node is 'object'
+    chain.push [node, part]
+    node = node[part]
+
+  [leafParent, leafKey] = chain[chain.length - 1]
+  delete leafParent[leafKey]
+
+  for index in [(chain.length - 2)..0]
+    [parent, key] = chain[index]
+    child = parent[key]
+    break unless child? and typeof child is 'object' and not Array.isArray(child) and Object.keys(child).length is 0
+    delete parent[key]
+
+  root
+
+loadDropdownOptions = (specPath) ->
+  return [] unless typeof specPath is 'string' and specPath.length
+  parts = specPath.split('/')
+  return [] unless parts.length >= 3
+  filePath = path.join CWD, parts[0], parts[1]
+  keyParts = parts.slice(2)
+  doc = readYaml filePath
+  node = doc
+  for key in keyParts
+    return [] unless node? and typeof node is 'object'
+    node = node[key]
+  return [] unless node? and typeof node is 'object'
+  rows = []
+  for own key, value of node
+    label = value?.text ? value?.character ? value?.label ? key
+    rows.push { key, label }
+  rows.sort (a, b) -> String(a.label).localeCompare String(b.label)
+  rows
+
+scanUiFields = (recipe, override, uiControl) ->
+  pendingUi = uiControl?.ui_values ? {}
+  rows = []
+
+  buildLabel = (pathText) ->
+    parts = String(pathText ? '').split('.')
+    return pathText unless parts.length
+    if parts.length >= 2
+      stepName = parts[0]
+      keyName = parts[parts.length - 1]
+      return "#{stepName}: #{keyName}"
+    pathText
+
+  walk = (node, prefix = '') ->
+    return unless node? and typeof node is 'object'
+    if Array.isArray(node)
+      directive = String(node[0] ? '')
+      if directive is 'UI_checkbox'
+        defaultValue = node[1] is true
+        chosenValue = if Object::hasOwnProperty.call(pendingUi, prefix)
+          pendingUi[prefix] is true
+        else
+          overrideValue = getByPath override, prefix
+          if typeof overrideValue is 'boolean' then overrideValue else defaultValue
+        rows.push
+          path: prefix
+          label: buildLabel(prefix)
+          type: 'checkbox'
+          default_value: defaultValue
+          value: chosenValue
+      else if directive is 'UI_dropdown'
+        sourcePath = String(node[1] ? '')
+        defaultValue = String(node[2] ? '')
+        chosenValue = if Object::hasOwnProperty.call(pendingUi, prefix)
+          String(pendingUi[prefix] ? '')
+        else
+          overrideValue = getByPath override, prefix
+          if typeof overrideValue is 'string' then overrideValue else defaultValue
+        sourceParts = sourcePath.split('/')
+        rows.push
+          path: prefix
+          label: buildLabel(prefix)
+          type: 'dropdown'
+          default_value: defaultValue
+          value: chosenValue
+          source_path: sourcePath
+          options: loadDropdownOptions(sourcePath)
+      return
+
+    return unless not Array.isArray(node)
+    for own key, value of node
+      currentPath = if prefix.length then "#{prefix}.#{key}" else key
+      walk value, currentPath
+
+  walk recipe
+  rows.sort (a, b) -> String(a.path).localeCompare String(b.path)
+  rows
+
 readRecipe = (pipeline) ->
   return {} unless typeof pipeline is 'string' and pipeline.length
   readYaml path.join(CWD, 'config', "#{pipeline}.yaml")
@@ -158,12 +276,14 @@ buildControls = ->
     disturbance: pending.disturbance ? overrideStoryStep.disturbance ? recipeStoryStep.disturbance ? ''
     reflection: pending.reflection ? overrideStoryStep.reflection ? recipeStoryStep.reflection ? ''
     realization: pending.realization ? overrideStoryStep.realization ? recipeStoryStep.realization ? ''
+    ui_values: Object.assign {}, (uiControl.ui_values ? {})
 
   overrideText = if typeof uiControl.override_text is 'string' and uiControl.override_text.trim().length
     uiControl.override_text
   else
     dumpYaml overrideObject
   recipeText = if pipelineName.length then dumpYaml(recipe) else ''
+  uiFields = scanUiFields recipe, override, uiControl
 
   {
     pipeline: pipelineName
@@ -192,6 +312,7 @@ buildControls = ->
     disturbance_options: makeOptions 'disturbances'
     reflection_options: makeOptions 'reflections'
     realization_options: makeOptions 'realizations'
+    ui_fields: uiFields
     override_text: overrideText
     recipe_text: recipeText
   }
@@ -384,6 +505,7 @@ buildLaunchPayloadFromControl = ->
 
   for key in ['story_id', 'scene', 'arrival', 'disturbance', 'reflection', 'realization']
     payload[key] = pending[key] if pending[key]?
+  payload.ui_values = Object.assign {}, (uiControl.ui_values ? {})
 
   payload
 
@@ -416,6 +538,18 @@ buildOverrideObject = (payload) ->
     delete override.select_story_recipe if Object.keys(override.select_story_recipe).length is 0
   else
     delete override.select_story_recipe
+
+  uiFields = scanUiFields recipe, override, { ui_values: payload.ui_values ? {} }
+  for field in uiFields
+    chosenValue = if payload?.ui_values? and Object::hasOwnProperty.call(payload.ui_values, field.path)
+      payload.ui_values[field.path]
+    else
+      field.value
+
+    if chosenValue is field.default_value
+      deleteByPath override, field.path
+    else
+      setByPath override, field.path, chosenValue
 
   override
 
@@ -552,6 +686,7 @@ handleLaunch = (req, res) ->
       disturbance: payload.disturbance ? ''
       reflection: payload.reflection ? ''
       realization: payload.realization ? ''
+    ui_values: if payload.ui_values? and typeof payload.ui_values is 'object' then payload.ui_values else {}
 
   if payload.continuous is true
     repeatLoop.enabled = true
@@ -636,10 +771,22 @@ handleControl = (req, res) ->
       disturbance: String(payload.disturbance ? '')
       reflection: String(payload.reflection ? '')
       realization: String(payload.realization ? '')
+    ui_values: if payload.ui_values? and typeof payload.ui_values is 'object'
+      Object.assign {}, (current?.ui_values ? {}), payload.ui_values
+    else
+      (current?.ui_values ? {})
     override_text: if typeof payload.override_text is 'string' then payload.override_text else null
 
-  if not (typeof next.override_text is 'string' and next.override_text.trim().length)
-    next.override_text = dumpYaml buildOverrideObject(next.pending)
+  unless typeof payload.override_text is 'string'
+    next.override_text = dumpYaml buildOverrideObject
+      pipeline: next.pending.pipeline
+      story_id: next.pending.story_id
+      scene: next.pending.scene
+      arrival: next.pending.arrival
+      disturbance: next.pending.disturbance
+      reflection: next.pending.reflection
+      realization: next.pending.realization
+      ui_values: next.ui_values
 
   writeUiControl next
   repeatLoop.enabled = next.continuous is true if repeatLoop.enabled or next.continuous is true

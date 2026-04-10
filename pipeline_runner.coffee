@@ -62,6 +62,22 @@ deepMerge = (target, source) ->
       target[k] = Array.isArray(v) and v.slice() or v
   target
 
+stripUiDirectives = (node) ->
+  return node unless node?
+  if Array.isArray(node)
+    directive = node[0]
+    if directive is 'UI_checkbox'
+      return node[1] is true
+    if directive is 'UI_dropdown'
+      return if node.length >= 3 then node[2] else ''
+    return node.map (item) -> stripUiDirectives(item)
+  if isPlainObject(node)
+    out = {}
+    for own k, v of node
+      out[k] = stripUiDirectives(v)
+    return out
+  node
+
 loadYamlSafe = (p) ->
   return {} unless p? and fs.existsSync(p)
   yaml.load fs.readFileSync(p,'utf8') or {}
@@ -324,7 +340,7 @@ createExperimentObject = (configPath, overridePath) ->
   recipe = expandIncludes loadYamlSafe(configPath), path.dirname(configPath)
   merged = deepMerge {}, recipe
   merged = deepMerge merged, loadYamlSafe(overridePath)
-  return merged
+  return stripUiDirectives(merged)
 
 normalizeDeps = (d) ->
   return [] unless d?
