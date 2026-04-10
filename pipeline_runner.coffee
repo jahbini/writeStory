@@ -336,10 +336,12 @@ class Memo
 # -------------------------------------------------------------------
 # Experiment + DAG
 # -------------------------------------------------------------------
-createExperimentObject = (configPath, overridePath) ->
+createExperimentObject = (configPath, overridePath, controlOverridePath = null) ->
   recipe = expandIncludes loadYamlSafe(configPath), path.dirname(configPath)
   merged = deepMerge {}, recipe
   merged = deepMerge merged, loadYamlSafe(overridePath)
+  if controlOverridePath? and fs.existsSync(controlOverridePath)
+    merged = deepMerge merged, loadYamlSafe(controlOverridePath)
   return stripUiDirectives(merged)
 
 normalizeDeps = (d) ->
@@ -815,13 +817,14 @@ main = ->
   M.saveThis "env/LOGDIR", process.env.LOGDIR if process.env.LOGDIR?
 
   overridePath = path.join(CWD,'override.yaml')
+  controlOverridePath = path.join(CWD,'control_override.yaml')
   override = loadYamlSafe overridePath
   unless override.pipeline?
     console.error "override.yaml missing pipeline"
     process.exit(1)
 
   configPath = path.join(EXEC,'config',"#{override.pipeline}.yaml")
-  experiment = createExperimentObject configPath, overridePath
+  experiment = createExperimentObject configPath, overridePath, controlOverridePath
   U.saveRun
     pipeline: override.pipeline
     pid: process.pid
@@ -835,6 +838,7 @@ main = ->
     modelDirName = experiment.run.model.replace /\//g, '--'
     targetDir    = path.resolve experiment.run.loraLand, modelDirName
     M.saveThis 'modelDir', targetDir
+  fs.writeFileSync path.join(CWD, 'experiment.yaml'), yaml.dump(experiment, lineWidth: 120, noRefs: true), 'utf8'
   M.saveThis 'experiment.yaml',experiment
 
   steps  = discoverSteps experiment

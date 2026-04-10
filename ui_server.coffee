@@ -16,6 +16,7 @@ repeatLoop =
   timer: null
   next_launch_at: null
 UI_CONTROL_PATH = path.join(CWD, 'state', 'ui-control.json')
+CONTROL_OVERRIDE_PATH = path.join(CWD, 'control_override.yaml')
 
 readJson = (p, fallback = null) ->
   return fallback unless fs.existsSync(p)
@@ -244,20 +245,25 @@ readOverride = ->
   return {} unless fs.existsSync overridePath
   try yaml.load(fs.readFileSync(overridePath, 'utf8')) ? {} catch then {}
 
+readControlOverride = ->
+  return {} unless fs.existsSync CONTROL_OVERRIDE_PATH
+  try yaml.load(fs.readFileSync(CONTROL_OVERRIDE_PATH, 'utf8')) ? {} catch then {}
+
 readYaml = (p) ->
   return {} unless fs.existsSync p
   try yaml.load(fs.readFileSync(p, 'utf8')) ? {} catch then {}
 
 buildControls = ->
   override = readOverride()
+  controlOverride = readControlOverride()
   uiControl = readUiControl()
   pending = uiControl.pending ? {}
-  pipelineName = pending.pipeline ? override.pipeline ? ''
+  pipelineName = pending.pipeline ? controlOverride.pipeline ? override.pipeline ? ''
   recipe = readRecipe(pipelineName)
   libraryDoc = readYaml path.join(CWD, 'data', 'jim_story_library.yaml')
   library = libraryDoc?.library ? {}
   recipeStoryStep = recipe?.select_story_recipe ? {}
-  overrideStoryStep = override?.select_story_recipe ? {}
+  controlStoryStep = controlOverride?.select_story_recipe ? {}
 
   makeOptions = (shelfName) ->
     shelf = library?[shelfName] ? {}
@@ -270,29 +276,31 @@ buildControls = ->
 
   overrideObject = buildOverrideObject
     pipeline: pipelineName
-    story_id: pending.story_id ? overrideStoryStep.story_id ? recipeStoryStep.story_id ? ''
-    scene: pending.scene ? overrideStoryStep.scene ? recipeStoryStep.scene ? ''
-    arrival: pending.arrival ? overrideStoryStep.arrival ? recipeStoryStep.arrival ? ''
-    disturbance: pending.disturbance ? overrideStoryStep.disturbance ? recipeStoryStep.disturbance ? ''
-    reflection: pending.reflection ? overrideStoryStep.reflection ? recipeStoryStep.reflection ? ''
-    realization: pending.realization ? overrideStoryStep.realization ? recipeStoryStep.realization ? ''
+    story_id: pending.story_id ? controlStoryStep.story_id ? recipeStoryStep.story_id ? ''
+    scene: pending.scene ? controlStoryStep.scene ? recipeStoryStep.scene ? ''
+    arrival: pending.arrival ? controlStoryStep.arrival ? recipeStoryStep.arrival ? ''
+    disturbance: pending.disturbance ? controlStoryStep.disturbance ? recipeStoryStep.disturbance ? ''
+    reflection: pending.reflection ? controlStoryStep.reflection ? recipeStoryStep.reflection ? ''
+    realization: pending.realization ? controlStoryStep.realization ? recipeStoryStep.realization ? ''
     ui_values: Object.assign {}, (uiControl.ui_values ? {})
 
-  overrideText = if typeof uiControl.override_text is 'string' and uiControl.override_text.trim().length
-    uiControl.override_text
+  controlOverrideText = if typeof uiControl.control_override_text is 'string' and uiControl.control_override_text.trim().length
+    uiControl.control_override_text
   else
     dumpYaml overrideObject
   recipeText = if pipelineName.length then dumpYaml(recipe) else ''
-  uiFields = scanUiFields recipe, override, uiControl
+  humanOverrideText = if fs.existsSync(path.join(CWD, 'override.yaml')) then readText(path.join(CWD, 'override.yaml'), '') else ''
+  experimentText = if fs.existsSync(path.join(CWD, 'experiment.yaml')) then readText(path.join(CWD, 'experiment.yaml'), '') else ''
+  uiFields = scanUiFields recipe, controlOverride, uiControl
 
   {
     pipeline: pipelineName
-    story_id: pending.story_id ? overrideStoryStep.story_id ? recipeStoryStep.story_id ? ''
-    scene: pending.scene ? overrideStoryStep.scene ? recipeStoryStep.scene ? ''
-    arrival: pending.arrival ? overrideStoryStep.arrival ? recipeStoryStep.arrival ? ''
-    disturbance: pending.disturbance ? overrideStoryStep.disturbance ? recipeStoryStep.disturbance ? ''
-    reflection: pending.reflection ? overrideStoryStep.reflection ? recipeStoryStep.reflection ? ''
-    realization: pending.realization ? overrideStoryStep.realization ? recipeStoryStep.realization ? ''
+    story_id: pending.story_id ? controlStoryStep.story_id ? recipeStoryStep.story_id ? ''
+    scene: pending.scene ? controlStoryStep.scene ? recipeStoryStep.scene ? ''
+    arrival: pending.arrival ? controlStoryStep.arrival ? recipeStoryStep.arrival ? ''
+    disturbance: pending.disturbance ? controlStoryStep.disturbance ? recipeStoryStep.disturbance ? ''
+    reflection: pending.reflection ? controlStoryStep.reflection ? recipeStoryStep.reflection ? ''
+    realization: pending.realization ? controlStoryStep.realization ? recipeStoryStep.realization ? ''
     continuous: uiControl.continuous is true
     pipelines: [
       'base_ite'
@@ -313,8 +321,10 @@ buildControls = ->
     reflection_options: makeOptions 'reflections'
     realization_options: makeOptions 'realizations'
     ui_fields: uiFields
-    override_text: overrideText
+    control_override_text: controlOverrideText
+    human_override_text: humanOverrideText
     recipe_text: recipeText
+    experiment_text: experimentText
   }
 
 describeOutputFile = (relativePath, runStart = null) ->
@@ -338,7 +348,8 @@ describeOutputFile = (relativePath, runStart = null) ->
 
 collectExpectedOutputs = (run) ->
   override = readOverride()
-  pipeline = override.pipeline ? run?.pipeline ? null
+  controlOverride = readControlOverride()
+  pipeline = controlOverride.pipeline ? override.pipeline ? run?.pipeline ? null
   return { out_files: [], diary_files: [] } unless pipeline?
 
   configPath = path.join(CWD, 'config', "#{pipeline}.yaml")
@@ -512,8 +523,8 @@ buildLaunchPayloadFromControl = ->
   payload
 
 buildOverrideObject = (payload) ->
-  override = readOverride()
-  pipelineName = String(payload.pipeline ? override.pipeline ? '')
+  override = {}
+  pipelineName = String(payload.pipeline ? readOverride().pipeline ? '')
   recipe = readRecipe(pipelineName)
   recipeStory = recipe?.select_story_recipe ? {}
   override.pipeline = pipelineName
@@ -555,12 +566,11 @@ buildOverrideObject = (payload) ->
 
   override
 
-writeOverrideText = (text) ->
-  overridePath = path.join(CWD, 'override.yaml')
-  writeText overridePath, text
-  parsed = readYaml overridePath
-  throw new Error 'override.yaml must parse to an object' unless parsed? and typeof parsed is 'object' and not Array.isArray(parsed)
-  throw new Error 'override.yaml must include pipeline' unless typeof parsed.pipeline is 'string' and parsed.pipeline.trim().length
+writeControlOverrideText = (text) ->
+  writeText CONTROL_OVERRIDE_PATH, text
+  parsed = readYaml CONTROL_OVERRIDE_PATH
+  throw new Error 'control_override.yaml must parse to an object' unless parsed? and typeof parsed is 'object' and not Array.isArray(parsed)
+  throw new Error 'control_override.yaml must include pipeline' unless typeof parsed.pipeline is 'string' and parsed.pipeline.trim().length
   parsed
 
 scheduleRepeatLaunch = ->
@@ -596,11 +606,11 @@ scheduleRepeatLaunch = ->
 
     uiControl = readUiControl()
     launchPayload = buildLaunchPayloadFromControl()
-    overrideText = if typeof uiControl.override_text is 'string' and uiControl.override_text.trim().length
-      uiControl.override_text
+    overrideText = if typeof uiControl.control_override_text is 'string' and uiControl.control_override_text.trim().length
+      uiControl.control_override_text
     else
       dumpYaml buildOverrideObject(launchPayload)
-    override = writeOverrideText overrideText
+    override = writeControlOverrideText overrideText
     clearStepState()
     launch = startRunner()
     seedUiRun launch, override
@@ -696,12 +706,12 @@ handleLaunch = (req, res) ->
     writeUiControl continuous: true
   else
     stopRepeatLoop()
-  overrideText = if typeof payload.override_text is 'string' and payload.override_text.trim().length
-    payload.override_text
+  overrideText = if typeof payload.control_override_text is 'string' and payload.control_override_text.trim().length
+    payload.control_override_text
   else
     dumpYaml buildOverrideObject(payload)
-  writeUiControl override_text: overrideText
-  override = writeOverrideText overrideText
+  writeUiControl control_override_text: overrideText
+  override = writeControlOverrideText overrideText
   clearStepState()
   launch = startRunner()
   seedUiRun launch, override
@@ -777,10 +787,10 @@ handleControl = (req, res) ->
       Object.assign {}, (current?.ui_values ? {}), payload.ui_values
     else
       (current?.ui_values ? {})
-    override_text: if typeof payload.override_text is 'string' then payload.override_text else null
+    control_override_text: if typeof payload.control_override_text is 'string' then payload.control_override_text else null
 
-  unless typeof payload.override_text is 'string'
-    next.override_text = dumpYaml buildOverrideObject
+  unless typeof payload.control_override_text is 'string'
+    next.control_override_text = dumpYaml buildOverrideObject
       pipeline: next.pending.pipeline
       story_id: next.pending.story_id
       scene: next.pending.scene

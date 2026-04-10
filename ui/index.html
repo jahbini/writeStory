@@ -296,9 +296,9 @@
       </section>
 
       <section class="panel">
-        <h2>Recipe And Override</h2>
+        <h2>Recipe And Overrides</h2>
         <div class="hint" style="margin-bottom:10px;">
-          Left is the recipe background. Right is the queued foreground override that will be written for the next run.
+          Recipe is the background. Human override stays separate. UI writes control_override. experiment.yaml is the effective next run.
         </div>
         <div class="yaml-grid">
           <div class="yaml-pane">
@@ -309,10 +309,22 @@
           </div>
           <div class="yaml-pane">
             <label>
-              Queued Override
-              <textarea id="override-editor" spellcheck="false"></textarea>
+              Human Override
+              <textarea id="human-override-viewer" class="yaml-readonly" spellcheck="false" readonly></textarea>
+            </label>
+          </div>
+          <div class="yaml-pane">
+            <label>
+              UI Control Override
+              <textarea id="control-override-editor" spellcheck="false"></textarea>
             </label>
             <div id="override-status" class="hint mono"></div>
+          </div>
+          <div class="yaml-pane">
+            <label>
+              Effective experiment.yaml
+              <textarea id="experiment-viewer" class="yaml-readonly" spellcheck="false" readonly></textarea>
+            </label>
           </div>
         </div>
       </section>
@@ -374,7 +386,7 @@
     function uiEditorHasFocus() {
       const active = document.activeElement;
       if (!active) return false;
-      if (active === byId('override-editor')) return true;
+      if (active === byId('control-override-editor')) return true;
       if (active === byId('pipeline-select')) return true;
       if (active === byId('continuous-checkbox')) return true;
       if (active.classList?.contains('ui-dropdown')) return true;
@@ -488,14 +500,20 @@
 
     function renderOverrideEditor(controls) {
       const recipeViewer = byId('recipe-viewer');
-      const editor = byId('override-editor');
+      const humanViewer = byId('human-override-viewer');
+      const experimentViewer = byId('experiment-viewer');
+      const controlEditor = byId('control-override-editor');
       const recipeText = typeof controls?.recipe_text === 'string' ? controls.recipe_text : '';
-      const text = typeof controls?.override_text === 'string' ? controls.override_text : '';
+      const humanText = typeof controls?.human_override_text === 'string' ? controls.human_override_text : '';
+      const experimentText = typeof controls?.experiment_text === 'string' ? controls.experiment_text : '';
+      const text = typeof controls?.control_override_text === 'string' ? controls.control_override_text : '';
       recipeViewer.value = recipeText;
+      humanViewer.value = humanText;
+      experimentViewer.value = experimentText;
       if ((overrideDirty || uiEditorHasFocus()) && overrideInitialized) {
         return;
       }
-      editor.value = text;
+      controlEditor.value = text;
       overrideInitialized = true;
       byId('override-status').textContent = '';
     }
@@ -616,7 +634,7 @@
           pipeline: byId('pipeline-select').value,
           ui_values: collectUiValues(),
           continuous: byId('continuous-checkbox').checked,
-          override_text: byId('override-editor').value
+          control_override_text: byId('control-override-editor').value
         };
         const res = await fetch('/api/launch', {
           method: 'POST',
@@ -649,7 +667,7 @@
       };
 
       if (manualOverrideDirty) {
-        payload.override_text = byId('override-editor').value;
+        payload.control_override_text = byId('control-override-editor').value;
       }
 
       const res = await fetch('/api/control', {
@@ -690,7 +708,7 @@
       };
 
       if (manualOverrideDirty) {
-        payload.override_text = byId('override-editor').value;
+        payload.control_override_text = byId('control-override-editor').value;
       }
 
       const res = await fetch('/api/control', {
@@ -760,7 +778,7 @@
         byId('override-status').textContent = String(err.message || err);
       });
     });
-    byId('override-editor').addEventListener('input', () => {
+    byId('control-override-editor').addEventListener('input', () => {
       controlsDirty = true;
       overrideDirty = true;
       manualOverrideDirty = true;
