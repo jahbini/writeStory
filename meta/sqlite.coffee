@@ -695,10 +695,35 @@ module.exports = (M, opts={}) ->
           """).all()
         write: null
       }
+
+      {
+        name: 'loraCycleReset'
+        regex: /^loraCycleReset$/
+        allowedSuffixes: ['json', 'txt', 'csv']
+        read: null
+        write: (db, value) ->
+          throw new Error "sqlite meta loraCycleReset write expects object" unless value? and typeof value is 'object' and not Array.isArray(value)
+          db.exec 'BEGIN'
+          try
+            db.exec "DELETE FROM lora_training_run_stories"
+            db.exec "DELETE FROM lora_training_runs"
+            db.exec "DELETE FROM lora_story_usage"
+            db.exec "DELETE FROM lora_trained_stories"
+            db.exec 'COMMIT'
+          catch err
+            try db.exec 'ROLLBACK' catch then null
+            throw err
+
+          {
+            ok: true
+            reset_at: value.reset_at ? new Date().toISOString()
+            mode: value.mode ? 'full'
+          }
+      }
     ]
 
     M.addMetaRule "sqlite",
-      /^(?:storyByID\{[^}]+\}|partsFor\{[^}]+\}|kagFor\{[^}]+\}|expandedPartsFor\{[^}]+\}|storiesWithKag\{[^}]+\}|storiesMissingKag|allStories|trainedStories|loraStoryUsage|loraTrainingRun\{[^}]+\}|loraTrainingRuns)\.(json|jsonl|txt|csv)$/i,
+      /^(?:storyByID\{[^}]+\}|partsFor\{[^}]+\}|kagFor\{[^}]+\}|expandedPartsFor\{[^}]+\}|storiesWithKag\{[^}]+\}|storiesMissingKag|allStories|trainedStories|loraStoryUsage|loraTrainingRun\{[^}]+\}|loraTrainingRuns|loraCycleReset)\.(json|jsonl|txt|csv)$/i,
       (key, value) ->
         debugLog "meta key", key, "write?", value isnt undefined
 

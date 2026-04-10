@@ -564,6 +564,7 @@
         ['cwd', run.cwd],
         ['started', formatLocalTime(run.started_at)],
         ['finished', formatLocalTime(run.finished_at)],
+        ['lora remaining', data.lora_remaining_count ?? ''],
         ['hh_mm', run.hh_mm],
         ['countdown', run.countdown_seconds ?? ''],
         ['shutdown by', pipelineState.by],

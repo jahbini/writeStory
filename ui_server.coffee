@@ -380,6 +380,7 @@ buildStatus = ->
   run = readJson path.join(CWD, 'state', 'ui-run.json'), {}
   pipelineState = readJson path.join(CWD, 'pipeline.json'), null
   expectedOutputs = collectExpectedOutputs(run)
+  loraRemaining = readJson path.join(CWD, 'out', 'lora_remaining_count.json'), null
   events = readJsonlTail path.join(CWD, 'state', 'ui-events.jsonl')
   steps = collectStepStates()
   stem = if run?.logdir? then String(run.logdir) else latestLogStem()
@@ -389,6 +390,7 @@ buildStatus = ->
   {
     run: run
     pipeline_state: pipelineState
+    lora_remaining_count: loraRemaining
     controls: buildControls()
     steps: steps
     events: events
@@ -789,7 +791,14 @@ handleControl = (req, res) ->
       ui_values: next.ui_values
 
   writeUiControl next
-  repeatLoop.enabled = next.continuous is true if repeatLoop.enabled or next.continuous is true
+  if next.continuous is true
+    repeatLoop.enabled = true
+  else
+    stopRepeatLoop()
+    writeUiRunPatch
+      loop_enabled: false
+      countdown_seconds: null
+      next_launch_at: null
 
   sendJson res, 200,
     ok: true

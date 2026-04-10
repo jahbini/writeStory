@@ -37,11 +37,13 @@ hasAdapterConfig = (adapterPath) ->
   desc: "Run MLX LoRA training using direct Memo access"
 
   action: (L) ->
+    cycleState = await L.need 'lora_cycle_state'
     selectedStoryIDs = await L.need 'selected_story_ids'
     trainRows = await L.need 'train_rows'
     validRows = await L.need 'valid_rows'
     testRows = await L.need 'test_rows'
 
+    throw new Error "[#{L.stepName}] lora_cycle_state must be an object" unless cycleState? and typeof cycleState is 'object' and not Array.isArray(cycleState)
     throw new Error "[#{L.stepName}] selected_story_ids must be an array" unless Array.isArray selectedStoryIDs
     throw new Error "[#{L.stepName}] train_rows must be an array" unless Array.isArray trainRows
     throw new Error "[#{L.stepName}] valid_rows must be an array" unless Array.isArray validRows
@@ -57,7 +59,7 @@ hasAdapterConfig = (adapterPath) ->
     throw new Error "[#{L.stepName}] Missing model directory" unless modelDir?
     throw new Error "[#{L.stepName}] Missing training_dir" unless trainingDir?
 
-    actualResumeFile = resolveResumeFile adapterPath, resumeFile
+    actualResumeFile = if cycleState.reset_this_run is true then null else resolveResumeFile(adapterPath, resumeFile)
     adapterConfigExists = hasAdapterConfig adapterPath
 
     args =
@@ -103,6 +105,7 @@ hasAdapterConfig = (adapterPath) ->
       test_rows_count: testRows.length
       checkpoint_path: checkpointPath
       story_ids: selectedStoryIDs
+      reset_this_run: cycleState.reset_this_run is true
 
     console.log "[run_lora_train_ite] train rows:", trainRows.length
     console.log "[run_lora_train_ite] valid rows:", validRows.length
