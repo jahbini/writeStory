@@ -8,6 +8,8 @@ run:
 artifacts:
   new_story_ids:
     target: out/new_story_ids.json
+  oracle_remaining_count:
+    target: out/oracle_remaining_count.json
   kag_rejects:
     target: out/rejects.jsonl
   kag_viewed:
@@ -35,7 +37,7 @@ oracle_ask_sqlite:
   run: kag_oracle_ite/oracle_ask_sqlite.coffee
   depends_on: [quantize_model]
   needs: []
-  makes: [new_story_ids, kag_rejects, kag_viewed]
+  makes: [new_story_ids, oracle_remaining_count, kag_rejects, kag_viewed]
   model_dir: build/model4
   quantized_model_memo_key: quantizedModelDir
   prompt_text: >

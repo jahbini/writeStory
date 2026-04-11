@@ -62,6 +62,13 @@ module.exports = (M, opts={}) ->
     CREATE INDEX IF NOT EXISTS idx_kag_entries_keyword
       ON kag_entries (keyword);
 
+    CREATE TABLE IF NOT EXISTS oracle_story_attempts (
+      story_id TEXT PRIMARY KEY,
+      fail_count INTEGER NOT NULL DEFAULT 0,
+      last_failed_at TEXT,
+      last_error TEXT
+    );
+
     CREATE TABLE IF NOT EXISTS lora_trained_stories (
       story_id TEXT PRIMARY KEY,
       trained_at TEXT
@@ -346,6 +353,80 @@ module.exports = (M, opts={}) ->
       }
 
       {
+        name: 'oracleFailureFor'
+        regex: /^oracleFailureFor\{([^}]+)\}$/
+        allowedSuffixes: ['json', 'txt', 'csv']
+        read: (db, storyID) ->
+          row = db.prepare("""
+            SELECT story_id, fail_count, last_failed_at, last_error
+            FROM oracle_story_attempts
+            WHERE story_id = ?
+          """).get(storyID)
+
+          unless row?
+            return {
+              story_id: storyID
+              fail_count: 0
+              last_failed_at: null
+              last_error: null
+            }
+
+          {
+            story_id: row.story_id
+            fail_count: row.fail_count ? 0
+            last_failed_at: row.last_failed_at ? null
+            last_error: row.last_error ? null
+          }
+        write: (db, value, storyID) ->
+          payload = if value? and typeof value is 'object' and not Array.isArray(value) then value else {}
+          if payload.reset is true
+            db.prepare("""
+              DELETE FROM oracle_story_attempts
+              WHERE story_id = ?
+            """).run(storyID)
+
+            return {
+              story_id: storyID
+              fail_count: 0
+              last_failed_at: null
+              last_error: null
+            }
+
+          current = db.prepare("""
+            SELECT fail_count
+            FROM oracle_story_attempts
+            WHERE story_id = ?
+          """).get(storyID)
+
+          nextCount = (current?.fail_count ? 0) + 1
+          failedAt = payload.last_failed_at ? new Date().toISOString()
+          lastError = payload.last_error ? payload.reason ? null
+
+          db.prepare("""
+            INSERT INTO oracle_story_attempts (
+              story_id, fail_count, last_failed_at, last_error
+            )
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(story_id) DO UPDATE SET
+              fail_count = excluded.fail_count,
+              last_failed_at = excluded.last_failed_at,
+              last_error = excluded.last_error
+          """).run(
+            storyID
+            nextCount
+            failedAt
+            lastError
+          )
+
+          {
+            story_id: storyID
+            fail_count: nextCount
+            last_failed_at: failedAt
+            last_error: lastError
+          }
+      }
+
+      {
         name: 'expandedPartsFor'
         regex: /^expandedPartsFor\{([^}]+)\}$/
         allowedSuffixes: ['json', 'txt', 'csv']
@@ -425,14 +506,24 @@ module.exports = (M, opts={}) ->
         allowedSuffixes: ['jsonl', 'txt', 'csv']
         read: (db) ->
           db.prepare("""
-            SELECT stories.story_id, stories.title, stories.text
+            SELECT
+              stories.story_id,
+              stories.title,
+              stories.text,
+              COALESCE(oracle_story_attempts.fail_count, 0) AS fail_count,
+              oracle_story_attempts.last_failed_at,
+              oracle_story_attempts.last_error
             FROM stories
+            LEFT JOIN oracle_story_attempts
+              ON oracle_story_attempts.story_id = stories.story_id
             WHERE NOT EXISTS (
               SELECT 1
               FROM kag_entries
               WHERE kag_entries.story_id = stories.story_id
             )
-            ORDER BY stories.story_id ASC
+            ORDER BY
+              COALESCE(oracle_story_attempts.fail_count, 0) ASC,
+              stories.story_id ASC
           """).all()
         write: null
       }
@@ -723,7 +814,7 @@ module.exports = (M, opts={}) ->
     ]
 
     M.addMetaRule "sqlite",
-      /^(?:storyByID\{[^}]+\}|partsFor\{[^}]+\}|kagFor\{[^}]+\}|expandedPartsFor\{[^}]+\}|storiesWithKag\{[^}]+\}|storiesMissingKag|allStories|trainedStories|loraStoryUsage|loraTrainingRun\{[^}]+\}|loraTrainingRuns|loraCycleReset)\.(json|jsonl|txt|csv)$/i,
+      /^(?:storyByID\{[^}]+\}|partsFor\{[^}]+\}|kagFor\{[^}]+\}|oracleFailureFor\{[^}]+\}|expandedPartsFor\{[^}]+\}|storiesWithKag\{[^}]+\}|storiesMissingKag|allStories|trainedStories|loraStoryUsage|loraTrainingRun\{[^}]+\}|loraTrainingRuns|loraCycleReset)\.(json|jsonl|txt|csv)$/i,
       (key, value) ->
         debugLog "meta key", key, "write?", value isnt undefined
 

@@ -17,6 +17,7 @@ repeatLoop =
   next_launch_at: null
 UI_CONTROL_PATH = path.join(CWD, 'state', 'ui-control.json')
 CONTROL_OVERRIDE_PATH = path.join(CWD, 'control_override.yaml')
+OVERRIDE_PATH = path.join(CWD, 'override.yaml')
 
 readJson = (p, fallback = null) ->
   return fallback unless fs.existsSync(p)
@@ -241,9 +242,8 @@ collectStepStates = ->
     String(a.step ? '').localeCompare String(b.step ? '')
 
 readOverride = ->
-  overridePath = path.join(CWD, 'override.yaml')
-  return {} unless fs.existsSync overridePath
-  try yaml.load(fs.readFileSync(overridePath, 'utf8')) ? {} catch then {}
+  return {} unless fs.existsSync OVERRIDE_PATH
+  try yaml.load(fs.readFileSync(OVERRIDE_PATH, 'utf8')) ? {} catch then {}
 
 readControlOverride = ->
   return {} unless fs.existsSync CONTROL_OVERRIDE_PATH
@@ -392,6 +392,8 @@ buildStatus = ->
   pipelineState = readJson path.join(CWD, 'pipeline.json'), null
   expectedOutputs = collectExpectedOutputs(run)
   loraRemaining = readJson path.join(CWD, 'out', 'lora_remaining_count.json'), null
+  oracleRemaining = readJson path.join(CWD, 'out', 'oracle_remaining_count.json'), null
+  storiesRemaining = if oracleRemaining? then oracleRemaining else loraRemaining
   events = readJsonlTail path.join(CWD, 'state', 'ui-events.jsonl')
   steps = collectStepStates()
   stem = if run?.logdir? then String(run.logdir) else latestLogStem()
@@ -402,6 +404,8 @@ buildStatus = ->
     run: run
     pipeline_state: pipelineState
     lora_remaining_count: loraRemaining
+    oracle_remaining_count: oracleRemaining
+    stories_remaining_count: storiesRemaining
     controls: buildControls()
     steps: steps
     events: events
@@ -571,6 +575,18 @@ writeControlOverrideText = (text) ->
   parsed = readYaml CONTROL_OVERRIDE_PATH
   throw new Error 'control_override.yaml must parse to an object' unless parsed? and typeof parsed is 'object' and not Array.isArray(parsed)
   throw new Error 'control_override.yaml must include pipeline' unless typeof parsed.pipeline is 'string' and parsed.pipeline.trim().length
+  parsed
+
+writeHumanOverrideText = (text) ->
+  trimmed = String(text ? '').trim()
+  if trimmed.length is 0
+    if fs.existsSync OVERRIDE_PATH
+      fs.unlinkSync OVERRIDE_PATH
+    return {}
+
+  writeText OVERRIDE_PATH, text
+  parsed = readYaml OVERRIDE_PATH
+  throw new Error 'override.yaml must parse to an object' unless parsed? and typeof parsed is 'object' and not Array.isArray(parsed)
   parsed
 
 scheduleRepeatLaunch = ->
@@ -801,6 +817,7 @@ handleControl = (req, res) ->
       ui_values: next.ui_values
 
   writeUiControl next
+  controlOverride = writeControlOverrideText next.control_override_text
   if next.continuous is true
     repeatLoop.enabled = true
   else
@@ -813,6 +830,21 @@ handleControl = (req, res) ->
   sendJson res, 200,
     ok: true
     control: next
+    control_override: controlOverride
+
+handleHumanOverride = (req, res) ->
+  bodyText = await readRequestBody req
+  payload = {}
+  try
+    payload = JSON.parse(bodyText ? '{}')
+  catch
+    return sendJson res, 400, { ok: false, error: 'invalid json body' }
+
+  text = if typeof payload.human_override_text is 'string' then payload.human_override_text else ''
+  override = writeHumanOverrideText text
+  sendJson res, 200,
+    ok: true
+    override: override
 
 server = http.createServer (req, res) ->
   url = req.url ? '/'
@@ -833,6 +865,11 @@ server = http.createServer (req, res) ->
         error: String(err?.message ? err)
   if url is '/api/control' and req.method is 'POST'
     return Promise.resolve(handleControl(req, res)).catch (err) ->
+      sendJson res, 500,
+        ok: false
+        error: String(err?.message ? err)
+  if url is '/api/human_override' and req.method is 'POST'
+    return Promise.resolve(handleHumanOverride(req, res)).catch (err) ->
       sendJson res, 500,
         ok: false
         error: String(err?.message ? err)

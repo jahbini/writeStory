@@ -135,7 +135,8 @@ renderPrompt = (template, text) ->
     rejectRows = [] unless Array.isArray rejectRows
 
     console.log "[oracle_ask_sqlite] pending:", pending.length
-    console.log "[oracle_ask_sqlite] stories left after this batch:", Math.max(pendingStories.length - pending.length, 0)
+    remainingAfterBatch = Math.max(pendingStories.length - pending.length, 0)
+    console.log "[oracle_ask_sqlite] stories left after this batch:", remainingAfterBatch
     S.make 'kag_viewed', pending
 
     newStoryIds = []
@@ -146,6 +147,7 @@ renderPrompt = (template, text) ->
         reason: 'all stories have already been passed to the sqlite oracle'
         timestamp: new Date().toISOString()
       S.make 'new_story_ids', newStoryIds
+      S.make 'oracle_remaining_count', 0
       S.make 'kag_rejects', rejectRows
       S.done()
       return
@@ -170,16 +172,24 @@ renderPrompt = (template, text) ->
         finalAttempt = attempt2
         unless isUsableEmotionList(attempt2.filtered)
           console.error "[oracle_ask_sqlite] FAILED #{storyID} oracle did not produce a usable filtered emotion list after retry"
+          failureReason = 'oracle did not produce a usable filtered emotion list after retry'
+          S.saveThis "oracleFailureFor{#{storyID}}.json",
+            story_id: storyID
+            last_failed_at: new Date().toISOString()
+            last_error: failureReason
           outRejects.push
             story_id: storyID
             title: title
             prompt: prompt
+            fail_count: (story?.fail_count ? 0) + 1
             raw_attempt_1: attempt1.raw
             parsed_attempt_1: attempt1.parsed
             filtered_attempt_1: attempt1.filtered
             raw_attempt_2: attempt2.raw
             parsed_attempt_2: attempt2.parsed
             filtered_attempt_2: attempt2.filtered
+            reason: failureReason
+          continue
 
       entries = []
       keywords = []
@@ -199,9 +209,13 @@ renderPrompt = (template, text) ->
         entries: entries
         keywords: keywords
 
+      S.saveThis "oracleFailureFor{#{storyID}}.json",
+        reset: true
+
       console.log "[oracle_ask_sqlite] tagged #{storyID}"
 
     S.make 'new_story_ids', newStoryIds
+    S.make 'oracle_remaining_count', remainingAfterBatch
     S.make 'kag_rejects', outRejects
     S.done()
     return

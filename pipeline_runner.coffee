@@ -819,14 +819,16 @@ main = ->
   overridePath = path.join(CWD,'override.yaml')
   controlOverridePath = path.join(CWD,'control_override.yaml')
   override = loadYamlSafe overridePath
-  unless override.pipeline?
-    console.error "override.yaml missing pipeline"
+  controlOverride = loadYamlSafe controlOverridePath
+  pipelineName = controlOverride.pipeline ? override.pipeline
+  unless pipelineName?
+    console.error "override.yaml/control_override.yaml missing pipeline"
     process.exit(1)
 
-  configPath = path.join(EXEC,'config',"#{override.pipeline}.yaml")
+  configPath = path.join(EXEC,'config',"#{pipelineName}.yaml")
   experiment = createExperimentObject configPath, overridePath, controlOverridePath
   U.saveRun
-    pipeline: override.pipeline
+    pipeline: pipelineName
     pid: process.pid
     cwd: CWD
     exec: EXEC

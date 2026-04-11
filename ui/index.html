@@ -310,15 +310,16 @@
           <div class="yaml-pane">
             <label>
               Human Override
-              <textarea id="human-override-viewer" class="yaml-readonly" spellcheck="false" readonly></textarea>
+              <textarea id="human-override-editor" spellcheck="false"></textarea>
             </label>
+            <div id="human-override-status" class="hint mono"></div>
           </div>
           <div class="yaml-pane">
             <label>
               UI Control Override
-              <textarea id="control-override-editor" spellcheck="false"></textarea>
+              <textarea id="control-override-viewer" class="yaml-readonly" spellcheck="false" readonly></textarea>
             </label>
-            <div id="override-status" class="hint mono"></div>
+            <div id="control-override-status" class="hint mono"></div>
           </div>
           <div class="yaml-pane">
             <label>
@@ -378,15 +379,16 @@
     let launchBusy = false;
     let controlsDirty = false;
     let controlsInitialized = false;
-    let overrideDirty = false;
-    let overrideInitialized = false;
-    let manualOverrideDirty = false;
-    let saveTimer = null;
+    let humanOverrideDirty = false;
+    let humanOverrideInitialized = false;
+    let controlOverrideInitialized = false;
+    let controlSaveTimer = null;
+    let humanSaveTimer = null;
 
     function uiEditorHasFocus() {
       const active = document.activeElement;
       if (!active) return false;
-      if (active === byId('control-override-editor')) return true;
+      if (active === byId('human-override-editor')) return true;
       if (active === byId('pipeline-select')) return true;
       if (active === byId('continuous-checkbox')) return true;
       if (active.classList?.contains('ui-dropdown')) return true;
@@ -500,22 +502,23 @@
 
     function renderOverrideEditor(controls) {
       const recipeViewer = byId('recipe-viewer');
-      const humanViewer = byId('human-override-viewer');
+      const humanEditor = byId('human-override-editor');
       const experimentViewer = byId('experiment-viewer');
-      const controlEditor = byId('control-override-editor');
+      const controlViewer = byId('control-override-viewer');
       const recipeText = typeof controls?.recipe_text === 'string' ? controls.recipe_text : '';
       const humanText = typeof controls?.human_override_text === 'string' ? controls.human_override_text : '';
       const experimentText = typeof controls?.experiment_text === 'string' ? controls.experiment_text : '';
       const text = typeof controls?.control_override_text === 'string' ? controls.control_override_text : '';
       recipeViewer.value = recipeText;
-      humanViewer.value = humanText;
       experimentViewer.value = experimentText;
-      if ((overrideDirty || uiEditorHasFocus()) && overrideInitialized) {
-        return;
+      if (!((humanOverrideDirty || document.activeElement === humanEditor) && humanOverrideInitialized)) {
+        humanEditor.value = humanText;
+        humanOverrideInitialized = true;
+        byId('human-override-status').textContent = '';
       }
-      controlEditor.value = text;
-      overrideInitialized = true;
-      byId('override-status').textContent = '';
+      controlViewer.value = text;
+      controlOverrideInitialized = true;
+      byId('control-override-status').textContent = 'UI-owned; updates from controls immediately';
     }
 
     function renderSteps(rows) {
@@ -582,7 +585,7 @@
         ['cwd', run.cwd],
         ['started', formatLocalTime(run.started_at)],
         ['finished', formatLocalTime(run.finished_at)],
-        ['lora remaining', data.lora_remaining_count ?? ''],
+        ['stories remaining', data.stories_remaining_count ?? ''],
         ['hh_mm', run.hh_mm],
         ['countdown', run.countdown_seconds ?? ''],
         ['shutdown by', pipelineState.by],
@@ -633,8 +636,7 @@
         const payload = {
           pipeline: byId('pipeline-select').value,
           ui_values: collectUiValues(),
-          continuous: byId('continuous-checkbox').checked,
-          control_override_text: byId('control-override-editor').value
+          continuous: byId('continuous-checkbox').checked
         };
         const res = await fetch('/api/launch', {
           method: 'POST',
@@ -646,10 +648,8 @@
           throw new Error(data.error || 'launch failed');
         }
         controlsDirty = false;
-        overrideDirty = false;
-        manualOverrideDirty = false;
         result.textContent = `pid ${data.pid}  pipeline ${data.override?.pipeline || ''}`;
-        byId('override-status').textContent = 'override written for current run';
+        byId('control-override-status').textContent = 'control override written for current run';
         await refresh();
       } catch (err) {
         result.textContent = String(err.message || err);
@@ -666,10 +666,6 @@
         continuous: byId('continuous-checkbox').checked
       };
 
-      if (manualOverrideDirty) {
-        payload.control_override_text = byId('control-override-editor').value;
-      }
-
       const res = await fetch('/api/control', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -680,12 +676,8 @@
         throw new Error(data.error || 'control save failed');
       }
       controlsDirty = false;
-      overrideDirty = false;
-      if (manualOverrideDirty) {
-        byId('override-status').textContent = 'queued manual override for next run';
-      } else {
-        byId('override-status').textContent = 'queued for next run';
-      }
+      controlOverrideInitialized = false;
+      byId('control-override-status').textContent = 'control override updated immediately';
     }
 
     async function saveSingleUiField(node) {
@@ -707,10 +699,6 @@
         continuous: byId('continuous-checkbox').checked
       };
 
-      if (manualOverrideDirty) {
-        payload.control_override_text = byId('control-override-editor').value;
-      }
-
       const res = await fetch('/api/control', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -722,19 +710,42 @@
       }
 
       controlsDirty = false;
-      overrideDirty = false;
-      if (manualOverrideDirty) {
-        byId('override-status').textContent = 'queued manual override for next run';
-      } else {
-        byId('override-status').textContent = 'queued for next run';
-      }
+      controlOverrideInitialized = false;
+      byId('control-override-status').textContent = 'control override updated immediately';
     }
 
     function scheduleControlSave() {
-      if (saveTimer) window.clearTimeout(saveTimer);
-      saveTimer = window.setTimeout(() => {
+      if (controlSaveTimer) window.clearTimeout(controlSaveTimer);
+      controlSaveTimer = window.setTimeout(() => {
         saveControlState().catch((err) => {
-          byId('override-status').textContent = String(err.message || err);
+          byId('control-override-status').textContent = String(err.message || err);
+        });
+      }, 250);
+    }
+
+    async function saveHumanOverride() {
+      const payload = {
+        human_override_text: byId('human-override-editor').value
+      };
+
+      const res = await fetch('/api/human_override', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        throw new Error(data.error || 'human override save failed');
+      }
+      humanOverrideDirty = false;
+      byId('human-override-status').textContent = 'override.yaml saved';
+    }
+
+    function scheduleHumanOverrideSave() {
+      if (humanSaveTimer) window.clearTimeout(humanSaveTimer);
+      humanSaveTimer = window.setTimeout(() => {
+        saveHumanOverride().catch((err) => {
+          byId('human-override-status').textContent = String(err.message || err);
         });
       }, 250);
     }
@@ -761,29 +772,28 @@
     setInterval(() => refresh().catch(console.error), 2000);
     byId('pipeline-select').addEventListener('change', () => {
       controlsDirty = true;
-      if (!manualOverrideDirty) overrideDirty = false;
-      scheduleControlSave();
+      saveControlState().catch((err) => {
+        byId('control-override-status').textContent = String(err.message || err);
+      });
     });
     byId('continuous-checkbox').addEventListener('change', () => {
       controlsDirty = true;
-      scheduleControlSave();
+      saveControlState().catch((err) => {
+        byId('control-override-status').textContent = String(err.message || err);
+      });
     });
     document.addEventListener('change', (event) => {
       if (!event.target.classList.contains('ui-checkbox') && !event.target.classList.contains('ui-dropdown')) return;
       controlsDirty = true;
-      manualOverrideDirty = false;
-      overrideDirty = false;
-      byId('override-status').textContent = 'rebuilding override from recipe UI fields...';
+      byId('control-override-status').textContent = 'rebuilding control override from recipe UI fields...';
       saveSingleUiField(event.target).catch((err) => {
-        byId('override-status').textContent = String(err.message || err);
+        byId('control-override-status').textContent = String(err.message || err);
       });
     });
-    byId('control-override-editor').addEventListener('input', () => {
-      controlsDirty = true;
-      overrideDirty = true;
-      manualOverrideDirty = true;
-      byId('override-status').textContent = 'editing queued override...';
-      scheduleControlSave();
+    byId('human-override-editor').addEventListener('input', () => {
+      humanOverrideDirty = true;
+      byId('human-override-status').textContent = 'editing override.yaml...';
+      scheduleHumanOverrideSave();
     });
     byId('launch-button').addEventListener('click', () => {
       launchPipeline().catch(console.error);
