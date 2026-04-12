@@ -1,0 +1,43 @@
+fs = require 'fs'
+path = require 'path'
+
+removePath = (baseDir, relativePath) ->
+  fullPath = path.join(baseDir, relativePath)
+  return false unless fs.existsSync fullPath
+  fs.rmSync fullPath, recursive: true, force: true
+  true
+
+@step =
+  desc: "Reset stale DB and training artifacts before base_ite seeds a fresh environment"
+
+  action: (S) ->
+    baseDir = process.cwd()
+
+    cleanupTargets = [
+      'runtime.sqlite'
+      'build/adapter'
+      'build/train'
+      'build/model4'
+      'out/story_seed_ids.json'
+      'out/new_story_ids.json'
+      'out/oracle_remaining_count.json'
+      'out/rejects.jsonl'
+      'out/viewed.jsonl'
+      'out/lora_cycle_state.json'
+      'out/lora_remaining_count.json'
+      'out/selected_story_ids.json'
+      'out/lora_train.txt'
+      'out/lora_run_record.json'
+      'out/trained_story_ids.json'
+    ]
+
+    removed = []
+
+    for relativePath in cleanupTargets
+      if removePath(baseDir, relativePath)
+        removed.push relativePath
+        console.log "[reset_base_environment_ite] removed #{relativePath}"
+
+    console.log "[reset_base_environment_ite] removed count:", removed.length
+    S.done()
+    return

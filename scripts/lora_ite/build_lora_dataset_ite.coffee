@@ -1,20 +1,3 @@
-pre_prompt = """You are writing in the narrative voice of Jim from St. John's.
-
-Expand the following story fragment into a complete reflective narrative.
-
-Maintain the same events and ideas, but improve flow, imagery, and voice.
-
-Rules:
-- Speak in the first person as Jim
-- Keep the same order of events
-- Do not introduce new plot elements
-- Add natural narration and sensory detail
-- The tone should be observational, slightly humorous, and reflective
-- Return only the finished story
-
-Story fragment:
-"""
-
 estimateTokens = (text) ->
   return 0 unless text?
   cleaned = String(text).trim()
@@ -71,11 +54,6 @@ buildFragmentParagraphs = (paragraphs) ->
 
   rval
 
-sanitizeStop = (text) ->
-  rval = String(text ? '')
-  rval = rval.replace /(?:\s*<stop>\s*)+$/g, ''
-  rval.trim()
-
 @step =
   desc: "Build LoRA train/valid/test rows from SQLite-backed stories"
 
@@ -98,8 +76,6 @@ sanitizeStop = (text) ->
 
     MAX_TOTAL_TOKENS = 1024
     SAFETY_TOKENS = 64
-    STOP_TEXT = "\n\n<stop>"
-    STOP_TOKENS = estimateTokens STOP_TEXT
 
     for storyID in selectedStoryIDs
       continue unless storyID?
@@ -131,19 +107,16 @@ sanitizeStop = (text) ->
         continue unless fragmentParagraphs.length > 0
 
         fragmentText = fragmentParagraphs.join "\n\n"
-        prompt = pre_prompt + fragmentText + "\n\nBegin:\n\n"
+        prompt = fragmentText.trim() + "\n\n"
         promptTokens = estimateTokens prompt
 
         completionStartIndex = fragmentParagraphs.length
         completionParagraphs = groupParagraphs.slice completionStartIndex
 
         if completionParagraphs.length is 0
-          textOut = prompt.trim() + STOP_TEXT
-          rows.push text: textOut
-          rowsWritten += 1
           continue
 
-        maxCompletionTokens = MAX_TOTAL_TOKENS - promptTokens - SAFETY_TOKENS - STOP_TOKENS
+        maxCompletionTokens = MAX_TOTAL_TOKENS - promptTokens - SAFETY_TOKENS
         throw new Error "[#{L.stepName}] prompt too large for token budget on story #{storyID}" if maxCompletionTokens < 80
 
         chunkParagraphs = []
@@ -153,11 +126,8 @@ sanitizeStop = (text) ->
           return unless chunkParagraphs.length > 0
 
           completionText = chunkParagraphs.join "\n\n"
-          completionText = sanitizeStop completionText
 
           textOut = prompt + completionText
-          if isLastChunk
-            textOut = sanitizeStop(textOut) + STOP_TEXT
 
           rows.push text: textOut
           rowsWritten += 1
@@ -198,10 +168,7 @@ sanitizeStop = (text) ->
             if sentenceChunk.length > 0
               isLastSentenceChunk = idx is completionParagraphs.length - 1
               completionText = sentenceChunk.join " "
-              completionText = sanitizeStop completionText
               textOut = prompt + completionText
-              if isLastSentenceChunk
-                textOut = sanitizeStop(textOut) + STOP_TEXT
               rows.push text: textOut
               rowsWritten += 1
 

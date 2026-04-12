@@ -14,9 +14,15 @@ artifacts:
   story_seed_ids:
     target: out/story_seed_ids.json
 
+reset_base_environment_ite:
+  run: story/reset_base_environment_ite.coffee
+  depends_on: []
+  needs: []
+  makes: []
+
 download_model:
   run: story/hf_download.coffee
-  depends_on: []
+  depends_on: [reset_base_environment_ite]
   needs: []
   makes: []
   loraLand: build/model
