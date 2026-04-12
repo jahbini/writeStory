@@ -22,6 +22,21 @@ coerceJSON = (value) ->
   catch
     value
 
+describeValue = (value) ->
+  if value is undefined
+    return 'undefined'
+  if value is null
+    return 'null'
+  if Array.isArray value
+    return "array(len=#{value.length})"
+  if typeof value is 'string'
+    snippet = value.replace(/\s+/g, ' ').slice(0, 120)
+    return "string(len=#{value.length}) #{JSON.stringify(snippet)}"
+  if typeof value is 'object'
+    keys = Object.keys(value).slice(0, 8).join(', ')
+    return "object(keys=#{keys})"
+  "#{typeof value} #{JSON.stringify(value)}"
+
 readArtifactTarget = (L, artifactKey) ->
   experiment = L.theLowdown('experiment.yaml')?.value ? {}
   targetKey = experiment?.artifacts?[artifactKey]?.target
@@ -51,15 +66,23 @@ resolveRunTag = (L) ->
   action: (L) ->
     storyParts = await L.need 'story_parts'
     prompt = await L.need 'diary_prompt_text'
+    promptSource = 'need:diary_prompt_text'
     storyParts = coerceJSON storyParts
 
     unless storyParts? and typeof storyParts is 'object' and not Array.isArray(storyParts)
       storyParts = await readArtifactTarget L, 'story_parts'
       storyParts = coerceJSON storyParts
 
+    if typeof prompt isnt 'string'
+      promptFromArtifact = await readArtifactTarget L, 'diary_prompt_text'
+      if typeof promptFromArtifact is 'string'
+        prompt = promptFromArtifact
+        promptSource = 'artifact:diary_prompt_text'
+      else
+        throw new Error "[#{L.stepName}] diary_prompt_text invalid; need resolved #{describeValue(await L.need 'diary_prompt_text')} from need:diary_prompt_text, artifact resolved #{describeValue(promptFromArtifact)} from artifact:diary_prompt_text"
+
     storyID = String(storyParts?.story_id ? '').trim()
     throw new Error "[#{L.stepName}] story_parts must be an object" unless storyParts? and typeof storyParts is 'object' and not Array.isArray(storyParts)
-    throw new Error "[#{L.stepName}] diary_prompt_text must be a string" unless typeof prompt is 'string'
 
     modelDir = L.param 'quantized_model_dir', null
     adapterPath = L.param 'adapter_path'
@@ -83,6 +106,7 @@ resolveRunTag = (L) ->
 
     console.log "[generate_diary_with_adapter_ite] story:", storyID
     console.log "[generate_diary_with_adapter_ite] text chars:", text.length
+    console.log "[generate_diary_with_adapter_ite] prompt source:", promptSource
 
     L.make 'diary_adapted_raw', String(rawOutput ? '')
     L.make 'diary_adapted_meta', meta
