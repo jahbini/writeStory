@@ -131,7 +131,7 @@ sanitizeStop = (text) ->
         continue unless fragmentParagraphs.length > 0
 
         fragmentText = fragmentParagraphs.join "\n\n"
-        prompt = pre_prompt + fragmentText + "\n\nBegin:\n\n"
+        prompt = fragmentText + "\n\n"
         promptTokens = estimateTokens prompt
 
         completionStartIndex = fragmentParagraphs.length
