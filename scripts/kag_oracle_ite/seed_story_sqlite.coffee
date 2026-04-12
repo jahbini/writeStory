@@ -33,7 +33,7 @@ safe = (title) ->
 
   action: (S) ->
     existingStories = S.theLowdown('allStories.jsonl')?.value
-    throw new Error "[#{S.stepName}] allStories.jsonl must be an array" unless Array.isArray existingStories
+    existingStories = [] unless Array.isArray existingStories
 
     if existingStories.length > 0
       storyIDs = []
