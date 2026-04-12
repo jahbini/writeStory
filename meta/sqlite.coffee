@@ -809,6 +809,36 @@ module.exports = (M, opts={}) ->
       }
 
       {
+        name: 'sqliteResetAll'
+        regex: /^sqliteResetAll$/
+        allowedSuffixes: ['json', 'txt', 'csv']
+        read: null
+        write: (db, value) ->
+          throw new Error "sqlite meta sqliteResetAll write expects object" unless value? and typeof value is 'object' and not Array.isArray(value)
+          db.exec 'BEGIN'
+          try
+            db.exec "DELETE FROM kag_entries"
+            db.exec "DELETE FROM oracle_story_attempts"
+            db.exec "DELETE FROM expanded_story_parts"
+            db.exec "DELETE FROM story_parts"
+            db.exec "DELETE FROM lora_training_run_stories"
+            db.exec "DELETE FROM lora_training_runs"
+            db.exec "DELETE FROM lora_story_usage"
+            db.exec "DELETE FROM lora_trained_stories"
+            db.exec "DELETE FROM stories"
+            db.exec 'COMMIT'
+          catch err
+            try db.exec 'ROLLBACK' catch then null
+            throw err
+
+          {
+            ok: true
+            reset_at: value.reset_at ? new Date().toISOString()
+            mode: value.mode ? 'full'
+          }
+      }
+
+      {
         name: 'loraCycleReset'
         regex: /^loraCycleReset$/
         allowedSuffixes: ['json', 'txt', 'csv']
@@ -835,7 +865,7 @@ module.exports = (M, opts={}) ->
     ]
 
     M.addMetaRule "sqlite",
-      /^(?:storyByID\{[^}]+\}|partsFor\{[^}]+\}|kagFor\{[^}]+\}|oracleFailureFor\{[^}]+\}|expandedPartsFor\{[^}]+\}|storiesWithKag\{[^}]+\}|storiesMissingKag|allStories|trainedStories|loraStoryUsage|loraTrainingRun\{[^}]+\}|loraTrainingRuns|loraCycleReset)\.(json|jsonl|txt|csv)$/i,
+      /^(?:storyByID\{[^}]+\}|partsFor\{[^}]+\}|kagFor\{[^}]+\}|oracleFailureFor\{[^}]+\}|expandedPartsFor\{[^}]+\}|storiesWithKag\{[^}]+\}|storiesMissingKag|allStories|trainedStories|loraStoryUsage|loraTrainingRun\{[^}]+\}|loraTrainingRuns|loraCycleReset|sqliteResetAll)\.(json|jsonl|txt|csv)$/i,
       (key, value) ->
         debugLog "meta key", key, "write?", value isnt undefined
 

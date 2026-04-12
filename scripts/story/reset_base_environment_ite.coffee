@@ -13,8 +13,11 @@ removePath = (baseDir, relativePath) ->
   action: (S) ->
     baseDir = process.cwd()
 
+    S.saveThis 'sqliteResetAll.json',
+      mode: 'full'
+      reset_at: new Date().toISOString()
+
     cleanupTargets = [
-      'runtime.sqlite'
       'build/adapter'
       'build/train'
       'build/model4'

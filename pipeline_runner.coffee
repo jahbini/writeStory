@@ -245,7 +245,10 @@ class Memo
     unless entry?
       entry = @_newEntry(key, value)
       @MM[key] = entry
-      try rv = entry.meta(key, value) catch then null
+      try
+        rv = entry.meta(key, value)
+      catch err
+        throw new Error "[Memo.saveThis] meta write failed for #{key}: #{err?.message ? err}"
       entry.value = rv if rv?
       @_resolve(entry, value) if value is true or value is false
       return entry
@@ -253,7 +256,10 @@ class Memo
     old = entry.resolver
     entry = @MM[key] = @_newEntry(key, value)
     try old?(value) catch then null
-    try rv = entry.meta(key, value) catch then null
+    try
+      rv = entry.meta(key, value)
+    catch err
+      throw new Error "[Memo.saveThis] meta write failed for #{key}: #{err?.message ? err}"
     entry.value = rv if rv?
     @_resolve(entry, value) if value is true or value is false   # <<< CRITICAL FIX
     entry.notifier.then (nv) -> entry.value = nv if nv?
