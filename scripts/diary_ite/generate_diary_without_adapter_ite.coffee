@@ -8,6 +8,7 @@ cleanGeneratedText = (prompt, rawOutput) ->
   lines = text.split /\r?\n/
   lines = lines.filter (line) ->
     trimmed = line.trim()
+    return false if /^=+$/.test trimmed
     return false if /^Prompt:\s+\d+\s+tokens/.test trimmed
     return false if /^Generation:\s+\d+\s+tokens/.test trimmed
     return false if /^Peak memory:\s+/.test trimmed

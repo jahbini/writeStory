@@ -1,6 +1,5 @@
-wordSet = (text) ->
-  words = String(text ? '').toLowerCase().match(/[a-z0-9]+/g) ? []
-  new Set(words)
+path = require 'path'
+{ DatabaseSync } = require 'node:sqlite'
 
 coerceJSON = (value) ->
   return value unless typeof value is 'string'
@@ -9,16 +8,106 @@ coerceJSON = (value) ->
   catch
     value
 
-scoreEntry = (entry, eventWords) ->
-  words = wordSet("#{entry?.keyword ? ''} #{entry?.headline ? ''}")
-  score = 0
-  score += 3 if String(entry?.keyword ? '').trim().length and eventWords.has(String(entry.keyword).toLowerCase())
-  for word in words
-    score += 1 if eventWords.has(word)
-  score
+splitParagraphs = (text) ->
+  rawParts = String(text ? '').split /\n\s*\n/
+  parts = []
+  for rawPart in rawParts
+    part = String(rawPart ? '').replace(/\s+/g, ' ').trim()
+    continue unless part.length
+    parts.push part
+  parts
+
+buildStoryGroups = (text) ->
+  paragraphs = splitParagraphs text
+  return [] unless paragraphs.length
+
+  if paragraphs.length < 5
+    return [
+      group_index: 1
+      text: paragraphs.join "\n\n"
+    ]
+
+  groups = []
+  total = paragraphs.length
+  baseSize = Math.floor(total / 5)
+  remainder = total % 5
+  startIndex = 0
+
+  for groupIndex in [0...5]
+    groupSize = baseSize
+    groupSize += 1 if groupIndex < remainder
+    selected = paragraphs.slice startIndex, startIndex + groupSize
+    groups.push
+      group_index: groupIndex + 1
+      text: selected.join "\n\n"
+    startIndex += groupSize
+
+  groups
+
+queryEmotionMatches = (db, emotionKeyword, limit) ->
+  return [] unless typeof emotionKeyword is 'string' and emotionKeyword.trim().length
+
+  rows = db.prepare("""
+    SELECT kag_entries.story_id, stories.title, stories.text, kag_entries.chunk_index, kag_entries.keyword, kag_entries.headline, kag_entries.entry_index
+    FROM kag_entries
+    INNER JOIN stories
+      ON stories.story_id = kag_entries.story_id
+    WHERE kag_entries.keyword = ?
+    ORDER BY kag_entries.story_id ASC, kag_entries.chunk_index ASC, kag_entries.entry_index ASC
+  """).all(emotionKeyword)
+
+  matches = []
+  seen = new Set()
+
+  for row in rows
+    chunkIndex = Number row?.chunk_index
+    continue unless Number.isFinite(chunkIndex) and chunkIndex > 0
+
+    groups = buildStoryGroups row?.text ? ''
+    group = groups[chunkIndex - 1]
+    continue unless group?
+
+    dedupeKey = "#{row.story_id}|#{chunkIndex}|#{row.keyword}|#{row.headline ? ''}"
+    continue if seen.has dedupeKey
+    seen.add dedupeKey
+
+    matches.push
+      story_id: row.story_id
+      title: row.title ? null
+      chunk_index: chunkIndex
+      keyword: row.keyword ? null
+      headline: row.headline ? null
+      chunk_text: group.text
+
+    break if matches.length >= limit
+
+  matches
+
+flattenEntries = (eventMap) ->
+  entries = []
+  keywords = []
+  seenKeywords = new Set()
+
+  for own kind, payload of (eventMap ? {})
+    for match in (payload?.matches ? [])
+      entries.push
+        story_id: match.story_id
+        kind: kind
+        chunk_index: match.chunk_index
+        keyword: match.keyword
+        headline: match.headline
+        chunk_text: match.chunk_text
+
+      keyword = String(match.keyword ? '').trim()
+      continue unless keyword.length
+      continue if seenKeywords.has keyword
+      seenKeywords.add keyword
+      keywords.push keyword
+
+  { entries, keywords }
 
 @step =
-  desc: "Collect the KAG entries that best fit the selected diary events"
+  desc: "Collect exact KAG chunk matches for the selected diary event emotions"
 
   action: (L) ->
     storyParts = await L.need 'story_parts'
@@ -29,84 +118,37 @@ scoreEntry = (entry, eventWords) ->
     storyID = String(storyParts.story_id ? '').trim()
     throw new Error "[#{L.stepName}] story_parts missing story_id" unless storyID.length
 
-    pretendStoryIDs = L.param 'pretend_story_ids', null
+    limitRaw = L.param 'per_event_match_limit'
+    limit = Number limitRaw
+    throw new Error "[#{L.stepName}] per_event_match_limit must be a positive integer" unless Number.isFinite(limit) and limit > 0 and Math.floor(limit) is limit
 
-    eventWords = new Set()
-    fields = [
-      ['scene', storyParts.scene]
-      ['arrival', storyParts.arrival]
-      ['disturbance', storyParts.disturbance]
-      ['reflection', storyParts.reflection]
-      ['realization', storyParts.realization]
-    ]
+    dbPath = path.join process.cwd(), 'runtime.sqlite'
+    db = new DatabaseSync dbPath
+    eventMap = {}
 
-    for [kind, event] in fields
-      for word in wordSet("#{kind} #{event?.text ? ''} #{event?.character ? ''} #{event?.location ? ''} #{event?.theme ? ''}")
-        eventWords.add word
+    try
+      for kind in ['scene', 'arrival', 'disturbance', 'reflection', 'realization']
+        selectedEmotion = String(L.param("#{kind}_emotion", '') ? '').trim()
+        matches = queryEmotionMatches db, selectedEmotion, limit
+        eventMap[kind] =
+          kind: kind
+          selected_emotion: selectedEmotion
+          matches: matches
+    finally
+      try db.close() catch then null
 
-    scored = []
-    if Array.isArray(pretendStoryIDs) and pretendStoryIDs.length > 0
-      for dbStoryID in pretendStoryIDs
-        continue unless dbStoryID?
-
-        kagEntry = L.theLowdown "kagFor{#{dbStoryID}}.json"
-        kag = kagEntry?.value
-        continue unless Array.isArray(kag?.entries)
-
-        for entry, idx in kag.entries
-          scored.push
-            story_id: dbStoryID
-            entry: entry
-            idx: idx
-            score: scoreEntry(entry, eventWords)
-    else
-      allStoriesEntry = L.theLowdown 'allStories.jsonl'
-      allStories = allStoriesEntry?.value
-      if allStories is undefined
-        if typeof allStoriesEntry?.waitFor is 'function'
-          allStories = await allStoriesEntry.waitFor()
-        else if allStoriesEntry?.notifier?
-          allStories = await allStoriesEntry.notifier
-
-      throw new Error "[#{L.stepName}] allStories.jsonl must be an array" unless Array.isArray allStories
-
-      for storyRow in allStories
-        dbStoryID = storyRow?.story_id
-        continue unless dbStoryID?
-
-        kagEntry = L.theLowdown "kagFor{#{dbStoryID}}.json"
-        kag = kagEntry?.value
-        continue unless Array.isArray(kag?.entries)
-
-        for entry, idx in kag.entries
-          scored.push
-            story_id: dbStoryID
-            entry: entry
-            idx: idx
-            score: scoreEntry(entry, eventWords)
-
-    scored.sort (a, b) ->
-      if b.score isnt a.score then b.score - a.score else a.idx - b.idx
-
-    chosen = (row.entry for row in scored.slice(0, Math.min(5, scored.length)))
-
-    keywordSet = new Set()
-    keywords = []
-    for entry in chosen
-      keyword = String(entry?.keyword ? '').trim()
-      continue unless keyword.length
-      continue if keywordSet.has keyword
-      keywordSet.add keyword
-      keywords.push keyword
+    flattened = flattenEntries eventMap
 
     payload =
       story_id: storyID
-      keywords: keywords
-      entries: chosen
+      keywords: flattened.keywords
+      entries: flattened.entries
+      events: eventMap
 
     console.log "[collect_diary_kag_ite] diary story:", storyID
-    console.log "[collect_diary_kag_ite] pretend stories:", pretendStoryIDs?.join(', ') ? 'none'
-    console.log "[collect_diary_kag_ite] chosen KAG entries:", chosen.length
+    for own kind, row of eventMap
+      console.log "[collect_diary_kag_ite] #{kind} emotion:", row.selected_emotion ? ''
+      console.log "[collect_diary_kag_ite] #{kind} matches:", row.matches.length
 
     L.make 'diary_kag', payload
     L.done()

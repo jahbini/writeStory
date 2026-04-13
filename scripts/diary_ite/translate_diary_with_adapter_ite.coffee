@@ -24,12 +24,9 @@ coerceJSON = (value) ->
     value
 
 describeValue = (value) ->
-  if value is undefined
-    return 'undefined'
-  if value is null
-    return 'null'
-  if Array.isArray value
-    return "array(len=#{value.length})"
+  if value is undefined then return 'undefined'
+  if value is null then return 'null'
+  if Array.isArray value then return "array(len=#{value.length})"
   if typeof value is 'string'
     snippet = value.replace(/\s+/g, ' ').slice(0, 120)
     return "string(len=#{value.length}) #{JSON.stringify(snippet)}"
@@ -61,59 +58,80 @@ resolveRunTag = (L) ->
   return null unless text.length
   text
 
+renderPrompt = (template, storyID, diaryText) ->
+  throw new Error "translation_prompt_text must be a string" unless typeof template is 'string'
+  text = template
+  text = text.replace /\{story_id\}/g, String(storyID ? '')
+  text = text.replace /\{diary_text\}/g, String(diaryText ? '')
+  text
+
 @step =
-  desc: "Generate a diary entry using the trained adapter"
+  desc: "Rewrite the base diary entry into Jim's voice with the adapter"
 
   action: (L) ->
     storyParts = await L.need 'story_parts'
-    prompt = await L.need 'diary_prompt_text'
-    promptSource = 'need:diary_prompt_text'
+    baseDiaryText = await L.need 'diary_base_text'
     storyParts = coerceJSON storyParts
 
     unless storyParts? and typeof storyParts is 'object' and not Array.isArray(storyParts)
       storyParts = await readArtifactTarget L, 'story_parts'
       storyParts = coerceJSON storyParts
 
-    if typeof prompt isnt 'string'
-      promptFromArtifact = await readArtifactTarget L, 'diary_prompt_text'
-      if typeof promptFromArtifact is 'string'
-        prompt = promptFromArtifact
-        promptSource = 'artifact:diary_prompt_text'
+    if typeof baseDiaryText isnt 'string'
+      baseDiaryFromArtifact = await readArtifactTarget L, 'diary_base_text'
+      if typeof baseDiaryFromArtifact is 'string'
+        baseDiaryText = baseDiaryFromArtifact
       else
-        throw new Error "[#{L.stepName}] diary_prompt_text invalid; need resolved #{describeValue(await L.need 'diary_prompt_text')} from need:diary_prompt_text, artifact resolved #{describeValue(promptFromArtifact)} from artifact:diary_prompt_text"
+        throw new Error "[#{L.stepName}] diary_base_text invalid; need resolved #{describeValue(await L.need 'diary_base_text')} from need:diary_base_text, artifact resolved #{describeValue(baseDiaryFromArtifact)} from artifact:diary_base_text"
 
-    storyID = String(storyParts?.story_id ? '').trim()
     throw new Error "[#{L.stepName}] story_parts must be an object" unless storyParts? and typeof storyParts is 'object' and not Array.isArray(storyParts)
+    throw new Error "[#{L.stepName}] diary_base_text must be a non-empty string" unless typeof baseDiaryText is 'string' and baseDiaryText.trim().length
 
+    storyID = String(storyParts.story_id ? '').trim()
     modelDir = L.param 'quantized_model_dir', null
     adapterPath = L.param 'adapter_path'
+    mlxConfig = L.param 'mlx', null
+    promptTemplate = L.param 'translation_prompt_text'
 
     throw new Error "[#{L.stepName}] Missing quantized_model_dir param" unless modelDir?
     throw new Error "[#{L.stepName}] Missing adapter_path" unless adapterPath?
+    throw new Error "[#{L.stepName}] mlx must be an object when provided" if mlxConfig? and (typeof mlxConfig isnt 'object' or Array.isArray(mlxConfig))
 
-    rawOutput = L.callMLX 'generate',
+    prompt = renderPrompt promptTemplate, storyID, baseDiaryText
+
+    mlxArgs =
       model: modelDir
       prompt: prompt
       "adapter-path": adapterPath
 
+    if mlxConfig? and typeof mlxConfig is 'object'
+      for own key, value of mlxConfig
+        continue unless value?
+        mlxArgs[key] = value
+
+    rawOutput = L.callMLX 'generate', mlxArgs
     text = cleanGeneratedText prompt, rawOutput
+
     meta =
       story_id: storyID
-      mode: 'adapter'
+      mode: 'adapter_translate'
       model_dir: modelDir
       adapter_path: adapterPath
+      source_text_chars: baseDiaryText.length
       raw_chars: String(rawOutput ? '').length
       text_chars: text.length
 
-    console.log "[generate_diary_with_adapter_ite] story:", storyID
-    console.log "[generate_diary_with_adapter_ite] text chars:", text.length
-    console.log "[generate_diary_with_adapter_ite] prompt source:", promptSource
+    console.log "[translate_diary_with_adapter_ite] story:", storyID
+    console.log "[translate_diary_with_adapter_ite] source chars:", baseDiaryText.length
+    console.log "[translate_diary_with_adapter_ite] text chars:", text.length
 
     L.make 'diary_adapted_raw', String(rawOutput ? '')
     L.make 'diary_adapted_meta', meta
     L.make 'diary_adapted_text', text
+
     runTag = resolveRunTag L
     if typeof runTag is 'string' and runTag.length
       L.saveThis "diary/diary_#{runTag}.adapter.txt", text
+
     L.done()
     return

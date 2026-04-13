@@ -75,24 +75,39 @@ build_diary_prompt_ite:
   needs: [story_parts, diary_kag]
   makes: [diary_prompt_text]
 
-generate_diary_with_adapter_ite:
-  run: diary_ite/generate_diary_event_ordered_ite.coffee
+generate_diary_without_adapter_ite:
+  run: diary_ite/generate_diary_without_adapter_ite.coffee
   depends_on: [build_diary_prompt_ite]
   needs: [story_parts, diary_prompt_text]
-  makes: [diary_adapted_raw, diary_adapted_meta, diary_adapted_text]
-  adapter_path: build/adapter
+  makes: [diary_base_raw, diary_base_meta, diary_base_text]
   quantized_model_dir: build/model4
   mlx:
     max-tokens: 2000
     temp: 0.7
     min-tokens: 500
 
-generate_diary_without_adapter_ite:
-  run: diary_ite/generate_diary_event_ordered_ite.coffee
-  depends_on: [build_diary_prompt_ite]
-  needs: [story_parts, diary_prompt_text]
-  makes: [diary_base_raw, diary_base_meta, diary_base_text]
+translate_diary_with_adapter_ite:
+  run: diary_ite/translate_diary_with_adapter_ite.coffee
+  depends_on: [generate_diary_without_adapter_ite]
+  needs: [story_parts, diary_base_text]
+  makes: [diary_adapted_raw, diary_adapted_meta, diary_adapted_text]
+  adapter_path: build/adapter
   quantized_model_dir: build/model4
+  translation_prompt_text: >
+    You are writing in the narrative voice of Jim from St. John's.
+
+    Translate this diary story into how Jim would say it.
+    Preserve the same events, order, and factual content.
+    Keep the paragraph structure.
+    Do not summarize.
+    Do not omit event beats.
+    Return only the rewritten diary entry.
+
+    Diary story id:
+    {story_id}
+
+    Diary story to translate:
+    {diary_text}
   mlx:
     max-tokens: 2000
     temp: 0.7

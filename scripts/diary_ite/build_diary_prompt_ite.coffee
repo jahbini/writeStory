@@ -17,6 +17,34 @@ renderKagEntry = (entry) ->
   return "- #{keyword}" if keyword.length
   "- unlabelled KAG cue"
 
+renderEventSupport = (kind, payload) ->
+  return null unless payload? and typeof payload is 'object'
+  emotion = String(payload.selected_emotion ? '').trim()
+  matches = payload.matches ? []
+  lines = []
+  lines.push "#{kind}:"
+  lines.push "  desired emotion: #{emotion}" if emotion.length
+  if matches.length is 0
+    lines.push "  raw support: none"
+    return lines.join "\n"
+
+  for match in matches
+    storyID = String(match?.story_id ? '').trim()
+    chunkIndex = match?.chunk_index
+    keyword = String(match?.keyword ? '').trim()
+    headline = String(match?.headline ? '').trim()
+    chunkText = String(match?.chunk_text ? '').trim()
+    metaBits = []
+    metaBits.push storyID if storyID.length
+    metaBits.push "chunk #{chunkIndex}" if chunkIndex?
+    metaBits.push keyword if keyword.length
+    metaBits.push headline if headline.length
+    lines.push "  - #{metaBits.join(' / ')}"
+    if chunkText.length
+      for line in chunkText.split /\r?\n/
+        lines.push "    #{line}"
+  lines.join "\n"
+
 coerceJSON = (value) ->
   return value unless typeof value is 'string'
   try
@@ -82,6 +110,10 @@ readArtifactTarget = (L, artifactKey) ->
     eventLines.push renderEvent kind:'realization', text: storyParts.realization?.text, keyword: '', headline: ''
     eventLines = eventLines.filter(Boolean)
     kagLines = (renderKagEntry(entry) for entry in diaryKag.entries when entry?).filter(Boolean)
+    supportLines = []
+    for kind in ['scene', 'arrival', 'disturbance', 'reflection', 'realization']
+      row = renderEventSupport kind, diaryKag?.events?[kind]
+      supportLines.push row if row?
     storyID = String(storyParts.story_id ? '').trim()
 
     prompt = [
@@ -92,7 +124,6 @@ readArtifactTarget = (L, artifactKey) ->
       "Use the KAG cues as emotional guidance, but keep the entry grounded and concrete."
       ""
       "Rules:"
-      "- Keep the events in the listed order"
       "- Do not introduce plot contradictions"
       "- Add sensory detail and reflective narration"
       "- Keep the voice observational, slightly humorous, and reflective"
@@ -104,8 +135,12 @@ readArtifactTarget = (L, artifactKey) ->
       "Diary events:"
       if eventLines.length then eventLines.join("\n") else "- none"
       ""
+      "Event raw support passages:"
+      if supportLines.length then supportLines.join("\n\n") else "- none"
+      ""
       "KAG cues:"
       if kagLines.length then kagLines.join("\n") else "- none"
+      "Write the events in the following order: scene, arrival, disturbance, reflection, realization. make each one a separate paragraph in your writing."
     ].join "\n"
 
     console.log "[build_diary_prompt_ite] story:", storyID

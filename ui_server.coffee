@@ -4,6 +4,7 @@ path = require 'path'
 http = require 'http'
 yaml = require 'js-yaml'
 { spawn } = require 'child_process'
+{ DatabaseSync } = require 'node:sqlite'
 
 CWD = process.cwd()
 PORT = Number(process.env.UI_PORT ? 4311)
@@ -98,6 +99,26 @@ deleteByPath = (root, dottedPath) ->
 
 loadDropdownOptions = (specPath) ->
   return [] unless typeof specPath is 'string' and specPath.length
+  if specPath is 'db/kag_keywords'
+    dbPath = path.join CWD, 'runtime.sqlite'
+    return [] unless fs.existsSync dbPath
+    db = null
+    try
+      db = new DatabaseSync dbPath
+      rows = db.prepare("""
+        SELECT DISTINCT keyword
+        FROM kag_entries
+        WHERE keyword IS NOT NULL AND TRIM(keyword) != ''
+        ORDER BY keyword ASC
+      """).all()
+      return ({
+        key: String(row.keyword)
+        label: String(row.keyword)
+      } for row in rows when row?.keyword?)
+    catch
+      return []
+    finally
+      try db?.close() catch then null
   parts = specPath.split('/')
   return [] unless parts.length >= 3
   filePath = path.join CWD, parts[0], parts[1]
@@ -307,6 +328,7 @@ buildControls = ->
       'oracle_ite'
       'lora_ite'
       'diary_ite'
+      'diary_translate_ite'
       'story_scan'
       'lora_scan'
     ]
@@ -372,7 +394,7 @@ collectExpectedOutputs = (run) ->
     else
       outFiles.push row
 
-  if pipeline is 'diary_ite' and run?.hh_mm?
+  if pipeline in ['diary_ite', 'diary_translate_ite'] and run?.hh_mm?
     diaryBase = "diary/diary_#{run.hh_mm}.txt"
     diaryAdapter = "diary/diary_#{run.hh_mm}.adapter.txt"
     for target in [diaryBase, diaryAdapter] when not seen.has(target)
@@ -532,18 +554,19 @@ buildOverrideObject = (payload) ->
   recipe = readRecipe(pipelineName)
   recipeStory = recipe?.select_story_recipe ? {}
   override.pipeline = pipelineName
+  diaryPipelines = ['diary_ite', 'diary_translate_ite']
 
-  if override.pipeline is 'diary_ite'
+  if override.pipeline in diaryPipelines
     override.select_story_recipe ?= {}
 
-  if override.pipeline is 'diary_ite'
+  if override.pipeline in diaryPipelines
     storyID = String(payload.story_id ? '').trim()
     if storyID.length and storyID isnt String(recipeStory.story_id ? '')
       override.select_story_recipe.story_id = storyID
     else
       delete override.select_story_recipe.story_id
 
-  if override.pipeline is 'diary_ite'
+  if override.pipeline in diaryPipelines
     for key in ['scene', 'arrival', 'disturbance', 'reflection', 'realization']
       value = String(payload[key] ? '').trim()
       recipeValue = String(recipeStory[key] ? '')
