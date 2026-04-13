@@ -18,7 +18,9 @@ Current event source:
 Invariants:
 - `diary_prompt_text` must be produced before either diary generator runs
 - `generate_diary_with_adapter_ite` and `generate_diary_without_adapter_ite` are sibling consumers
+- prompt should include raw source passages from `diary_kag.events.<kind>.matches`
 
 Known pitfalls:
 - if downstream sees bad `diary_prompt_text`, inspect merged graph in `experiment.yaml`
 - invalid override semantics can break this step indirectly
+- DB-backed raw support passages are now preferred over generic flat KAG cue lists
