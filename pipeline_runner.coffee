@@ -743,11 +743,15 @@ runStep = (n, def, exp, M, S, active, resolveArtifact, artifactSpecFor, uiRecord
         try uiRecorder?.event type:'step', phase:'finished', step:n, status:'done' catch then null
         res(true)
       else
-        S.markFailed n, errMsg ? "failed"
-        S.writePipelineShutdown
+        shutdownInfo =
           status: 'shutdown'
           by: n
           reason: errMsg ? "failed"
+          failed: true
+          timestamp: new Date().toISOString()
+        S.markFailed n, errMsg ? "failed"
+        S.writePipelineShutdown shutdownInfo
+        M.saveThis "pipeline:shutdown", shutdownInfo
         M.saveThis "done:#{n}", false
         try uiRecorder?.event type:'step', phase:'finished', step:n, status:'failed', error:String(errMsg ? "failed") catch then null
         rej new Error(String(errMsg ? "failed"))
@@ -1092,13 +1096,15 @@ main = ->
     sd = M.theLowdown("pipeline:shutdown").value
     if sd?
       S.writePipelineShutdown sd
+      exitCode = if sd.failed is true then 1 else 0
       U.updateRun
-        status: 'shutdown'
+        status: if sd.failed is true then 'failed' else 'shutdown'
         shutdown: sd
-      banner "🛑 PIPELINE SHUTDOWN"
+        finished_at: new Date().toISOString()
+      banner if sd.failed is true then "💥 PIPELINE FAILED" else "🛑 PIPELINE SHUTDOWN"
       console.log "  by:", sd.by
       console.log "  reason:", sd.reason
-      process.exit(0)
+      process.exit(exitCode)
 
     doneFinals = true
     anyFail = false

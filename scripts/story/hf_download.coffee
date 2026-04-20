@@ -52,6 +52,20 @@ writeProvenance = (targetDir, modelId, repoUrl) ->
     recorded_at: new Date().toISOString()
   fs.writeFileSync provPath, JSON.stringify(payload, null, 2), 'utf8'
 
+modelTail = (modelId) ->
+  return '' unless modelId?
+  String(modelId).split('/').pop() ? ''
+
+resolveRequestedModelId = (requestedModelId, provenance = null) ->
+  requested = String(requestedModelId ? '').trim()
+  return requested if requested.includes('/')
+
+  recorded = String(provenance?.model_id ? '').trim()
+  if recorded.length and modelTail(recorded) is requested
+    return recorded
+
+  requested
+
 @step =
   desc: "Initialize base HF model into loraland (git + lfs, retry-hardened)"
 
@@ -64,14 +78,13 @@ writeProvenance = (targetDir, modelId, repoUrl) ->
     # Read parameters from Memo
     # ------------------------------------------------------------
 
-    hfModelId = M.getStepParam stepName, 'model'
+    hfModelIdRaw = M.getStepParam stepName, 'model'
     loraRoot  = M.getStepParam stepName, 'loraLand'
 
-    throw new Error "Missing model param" unless hfModelId?
+    throw new Error "Missing model param" unless hfModelIdRaw?
     throw new Error "Missing loraLand param" unless loraRoot?
 
     targetDir = path.resolve loraRoot
-    repoUrl   = "https://huggingface.co/#{hfModelId}"
 
     M.saveThis 'modelDir', targetDir
     console.log "model directory",targetDir
@@ -92,6 +105,8 @@ writeProvenance = (targetDir, modelId, repoUrl) ->
     catch then hasWeights = false
 
     provenance = readProvenance targetDir if present
+    hfModelId = resolveRequestedModelId hfModelIdRaw, provenance
+    repoUrl   = "https://huggingface.co/#{hfModelId}"
 
     if present && hasWeights
       unless provenance?
@@ -101,6 +116,9 @@ writeProvenance = (targetDir, modelId, repoUrl) ->
 
       console.log "[init] Model already present, skipping."
       return
+
+    unless hfModelId.includes '/'
+      throw new Error "[init] Model '#{hfModelIdRaw}' is not organization-qualified and no matching provenance was found in #{targetDir}. Use a full Hugging Face model id such as mlx-community/#{hfModelIdRaw}."
 
     run 'mkdir', ['-p', targetDir]
 
