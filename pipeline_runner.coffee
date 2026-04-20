@@ -191,14 +191,41 @@ expandIncludes = (spec, baseDir) ->
 ensureSingleInstance = ->
   try
     scriptPath = path.resolve(__filename)
-    out = execSync("ps -Ao pid,command | grep 'coffee' | grep '#{scriptPath}' | grep -v grep || true").toString()
-    lines = out.trim().split("\n").filter (l)-> l.length>0
-    others = lines.filter (l)-> not l.startsWith(process.pid.toString())
+    out = execSync('ps -Ao pid=,command=', encoding:'utf8')
+    lines = out.split("\n").map((l)-> l.trim()).filter (l)-> l.length > 0
+    others = []
+
+    for line in lines
+      match = line.match /^(\d+)\s+(.*)$/
+      continue unless match?
+      pid = Number(match[1])
+      command = String(match[2] ? '')
+      continue unless Number.isFinite(pid) and pid > 0
+      continue if pid is process.pid
+      continue unless command.includes('pipeline_runner.coffee')
+      continue unless command.includes(scriptPath) or command.includes(path.basename(scriptPath))
+      others.push
+        pid: pid
+        command: command
+
     if others.length > 0
       console.error "[pipeline_runner] another pipeline_runner.coffee is already active"
+      for other in others
+        console.error "[pipeline_runner] active pid=#{other.pid} cmd=#{other.command}"
       return others
-  catch then null
+  catch err
+    console.error "[pipeline_runner] single-instance check failed:", String(err?.message ? err)
+    null
   null
+
+isProcessAlive = (pid) ->
+  num = Number(pid)
+  return false unless Number.isFinite(num) and num > 0
+  try
+    process.kill num, 0
+    true
+  catch
+    false
 
 summarizeValue = (value) ->
   kind = if value is null then 'null' else if Array.isArray(value) then 'array' else typeof value
@@ -903,9 +930,13 @@ main = ->
     current = {}
     if fs.existsSync(uiRunPath)
       try current = JSON.parse(fs.readFileSync(uiRunPath, 'utf8')) catch then current = {}
-    current.status = 'skipped'
-    current.finished_at = new Date().toISOString()
-    current.reason = 'another pipeline_runner.coffee is already active'
+    if isProcessAlive(current?.pid)
+      current.status = 'running'
+      current.reason = 'attached to existing pipeline_runner.coffee'
+    else
+      current.status = 'skipped'
+      current.finished_at = new Date().toISOString()
+      current.reason = 'another pipeline_runner.coffee is already active'
     current.other_runners = otherRunners
     fs.writeFileSync uiRunPath, JSON.stringify(current, null, 2), 'utf8'
     process.exit(0)

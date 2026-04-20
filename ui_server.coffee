@@ -32,6 +32,31 @@ writeText = (p, text) ->
   fs.mkdirSync path.dirname(p), { recursive: true }
   fs.writeFileSync p, text, 'utf8'
 
+isProcessAlive = (pid) ->
+  num = Number(pid)
+  return false unless Number.isFinite(num) and num > 0
+  try
+    process.kill num, 0
+    true
+  catch
+    false
+
+normalizeUiRun = (run) ->
+  current = if run? and typeof run is 'object' and not Array.isArray(run) then Object.assign({}, run) else {}
+  pid = Number(current.pid ? 0)
+  alive = isProcessAlive(pid)
+
+  if alive and current.status in ['launching', 'running', 'skipped', 'killing']
+    current.status = if current.status is 'killing' then 'killing' else 'running'
+    current.pid = pid
+    current.is_attached = true
+    current.is_process_alive = true
+    return current
+
+  current.is_attached = false
+  current.is_process_alive = alive
+  current
+
 writeUiRunPatch = (patch) ->
   runPath = path.join(CWD, 'state', 'ui-run.json')
   current = readJson(runPath, {})
@@ -410,7 +435,7 @@ collectExpectedOutputs = (run) ->
   }
 
 buildStatus = ->
-  run = readJson path.join(CWD, 'state', 'ui-run.json'), {}
+  run = normalizeUiRun readJson path.join(CWD, 'state', 'ui-run.json'), {}
   pipelineState = readJson path.join(CWD, 'pipeline.json'), null
   expectedOutputs = collectExpectedOutputs(run)
   loraRemaining = readJson path.join(CWD, 'out', 'lora_remaining_count.json'), null
@@ -511,6 +536,12 @@ seedUiRun = (launch, override) ->
     finished_at: current.finished_at ? null
 
   writeText runPath, JSON.stringify(seeded, null, 2)
+
+findActiveWorkspaceRun = ->
+  runPath = path.join(CWD, 'state', 'ui-run.json')
+  run = normalizeUiRun readJson(runPath, {}), {}
+  return null unless run.is_process_alive is true and Number(run.pid ? 0) > 0
+  run
 
 markUiRunExited = (launch, patch = {}) ->
   runPath = path.join(CWD, 'state', 'ui-run.json')
@@ -752,6 +783,22 @@ handleLaunch = (req, res) ->
     dumpYaml buildOverrideObject(payload)
   writeUiControl control_override_text: overrideText
   override = writeControlOverrideText overrideText
+  attachedRun = findActiveWorkspaceRun()
+  if attachedRun?
+    writeUiRunPatch
+      status: 'running'
+      pid: attachedRun.pid
+      loop_enabled: repeatLoop.enabled
+      countdown_seconds: null
+      next_launch_at: null
+    return sendJson res, 200,
+      ok: true
+      attached: true
+      pid: attachedRun.pid
+      hh_mm: attachedRun.hh_mm ? null
+      logdir: attachedRun.logdir ? null
+      override: override
+
   clearStepState()
   launch = startRunner()
   seedUiRun launch, override
@@ -775,11 +822,16 @@ handleKill = (req, res) ->
   targetKind = 'run'
 
   if run?.status is 'skipped' and Array.isArray(run?.other_runners) and run.other_runners.length > 0
-    first = String(run.other_runners[0] ? '')
-    match = first.match(/^\s*(\d+)\b/)
-    if match?
-      pid = Number(match[1])
+    first = run.other_runners[0]
+    if typeof first?.pid is 'number' and first.pid > 0
+      pid = Number(first.pid)
       targetKind = 'blocking_runner'
+    else
+      firstText = String(first ? '')
+      match = firstText.match(/^\s*(\d+)\b/)
+      if match?
+        pid = Number(match[1])
+        targetKind = 'blocking_runner'
 
   return sendJson(res, 400, { ok: false, error: 'no active run pid recorded' }) unless pid > 0
 
