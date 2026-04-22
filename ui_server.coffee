@@ -8,9 +8,6 @@ yaml = require 'js-yaml'
 
 CWD = process.env.CWD ? process.cwd()
 PORT = Number(process.env.UI_PORT ? 4311)
-EXEC_ROOT = process.env.EXEC ? path.dirname(__filename)
-RUNNER = path.join(EXEC_ROOT, 'pipeline_runner.coffee')
-MERGE_SCRIPT = path.join(EXEC_ROOT, 'merge_sqlite_dbs.coffee')
 HOST = if process.argv[2] is 'net' then '0.0.0.0' else '127.0.0.1'
 repeatLoop =
   enabled: false
@@ -33,6 +30,40 @@ readText = (p, fallback = '') ->
 writeText = (p, text) ->
   fs.mkdirSync path.dirname(p), { recursive: true }
   fs.writeFileSync p, text, 'utf8'
+
+looksLikeExecRoot = (candidate) ->
+  return false unless typeof candidate is 'string' and candidate.length
+  try
+    fs.existsSync(path.join(candidate, 'ui', 'index.html')) and fs.existsSync(path.join(candidate, 'pipeline_runner.coffee'))
+  catch
+    false
+
+resolveExecRoot = ->
+  candidates = []
+  seen = new Set()
+
+  pushCandidate = (candidate) ->
+    return unless typeof candidate is 'string' and candidate.length
+    absolute = path.resolve(candidate)
+    return if seen.has(absolute)
+    seen.add absolute
+    candidates.push absolute
+
+  pushCandidate process.env.EXEC if process.env.EXEC?
+  pushCandidate path.dirname(__filename)
+  pushCandidate process.cwd()
+  pushCandidate CWD
+  pushCandidate path.dirname(CWD)
+  pushCandidate path.dirname(path.dirname(CWD))
+
+  for candidate in candidates when looksLikeExecRoot(candidate)
+    return candidate
+
+  candidates[0] ? path.dirname(__filename)
+
+EXEC_ROOT = resolveExecRoot()
+RUNNER = path.join(EXEC_ROOT, 'pipeline_runner.coffee')
+MERGE_SCRIPT = path.join(EXEC_ROOT, 'merge_sqlite_dbs.coffee')
 
 PIPES_ROOT = path.join(EXEC_ROOT, 'pipes')
 
@@ -548,6 +579,10 @@ sendJson = (res, code, payload) ->
 sendHtml = (res, p) ->
   body = readText p, ''
   if not body.length
+    console.error "[ui_server] missing html:", p
+    console.error "[ui_server] EXEC_ROOT:", EXEC_ROOT
+    console.error "[ui_server] CWD:", CWD
+    console.error "[ui_server] __filename:", __filename
     res.writeHead 404, 'Content-Type': 'text/plain; charset=utf-8'
     res.end 'ui/index.html not found'
     return
