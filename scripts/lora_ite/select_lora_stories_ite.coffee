@@ -1,3 +1,34 @@
+shuffleInPlace = (rows) ->
+  return rows unless Array.isArray rows
+  for idx in [(rows.length - 1)..1]
+    swapIdx = Math.floor Math.random() * (idx + 1)
+    continue if swapIdx is idx
+    temp = rows[idx]
+    rows[idx] = rows[swapIdx]
+    rows[swapIdx] = temp
+  rows
+
+shuffleUsageTies = (rows) ->
+  return [] unless Array.isArray rows
+  groups = new Map()
+  orderedUseCounts = []
+
+  for row in rows
+    useCount = Number(row?.use_count ? 0)
+    unless groups.has(useCount)
+      groups.set useCount, []
+      orderedUseCounts.push useCount
+    groups.get(useCount).push row
+
+  orderedUseCounts.sort (a, b) -> a - b
+
+  out = []
+  for useCount in orderedUseCounts
+    bucket = groups.get(useCount) ? []
+    shuffleInPlace bucket
+    out.push bucket...
+  out
+
 @step =
   desc: "Select a small SQLite-backed story batch for LoRA training"
 
@@ -35,6 +66,8 @@
       resetThisRun = true
       remainingRows = usageRows.slice().sort (a, b) ->
         String(a?.story_id ? '').localeCompare String(b?.story_id ? '')
+
+    remainingRows = shuffleUsageTies remainingRows
 
     selectedStoryIDs = []
 
