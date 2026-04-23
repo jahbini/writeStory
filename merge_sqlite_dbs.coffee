@@ -2,7 +2,6 @@
 fs = require 'fs'
 os = require 'os'
 path = require 'path'
-console.error "JIM0"
 { execFileSync } = require 'child_process'
 { DatabaseSync } = require 'node:sqlite'
 
@@ -83,7 +82,6 @@ while i < args.length
 
   i += 1
 
-console.error "JIM1"
 repoRoot = process.cwd()
 pipeName = if opts.pipe? and String(opts.pipe).trim().length then String(opts.pipe).trim() else null
 localPipeName = if opts.localPipe? and String(opts.localPipe).trim().length then String(opts.localPipe).trim() else pipeName
@@ -116,7 +114,6 @@ console.log "[merge_sqlite_dbs] local adapter dir:", localAdapterDir
 console.log "[merge_sqlite_dbs] remote DB:", opts.remoteDb
 console.log "[merge_sqlite_dbs] remote adapter dir:", opts.remoteAdapterDir
 
-console.error "JIM2"
 tmpRoot = fs.mkdtempSync path.join(os.tmpdir(), 'merge-sqlite-dbs-')
 remoteDbCopy = path.join tmpRoot, 'remote-runtime.sqlite'
 remoteAdapterCopy = path.join tmpRoot, 'remote-adapter'
@@ -135,6 +132,14 @@ countRows = (db, tableName) ->
 run = (cmd, args) ->
   console.log "[merge_sqlite_dbs] exec:", cmd, args.join(' ')
   execFileSync cmd, args, stdio: 'inherit'
+
+capture = (cmd, args) ->
+  try
+    execFileSync cmd, args,
+      stdio: ['ignore', 'pipe', 'pipe']
+      encoding: 'utf8'
+  catch err
+    String(err?.stdout ? err?.stderr ? '').trim()
 
 copyRemoteFile = ->
   console.log "[merge_sqlite_dbs] copying remote DB from #{remoteSpec}:#{opts.remoteDb}"
@@ -167,17 +172,37 @@ summarize = (db, label) ->
   for tableName in tablesToMerge
     console.log "  #{tableName}: #{countRows(db, tableName)}"
 
-console.error "JIM3"
+isSqliteLockedError = (err) ->
+  text = String(err?.message ? err ? '')
+  /database is locked|SQLITE_BUSY|SQLITE_LOCKED/i.test text
+
+describePhaseError = (phase, err) ->
+  return unless isSqliteLockedError err
+  console.error "[merge_sqlite_dbs] SQLITE LOCKED during #{phase}"
+  console.error "[merge_sqlite_dbs] local DB:", localDbPath
+  console.error "[merge_sqlite_dbs] local pipe:", localPipeName ? '(none)'
+  console.error "[merge_sqlite_dbs] remote DB copy:", remoteDbCopy
+  console.error "[merge_sqlite_dbs] note: another local process may have runtime.sqlite open for writing"
+  lsofText = capture 'lsof', [localDbPath]
+  if lsofText.length
+    console.error "[merge_sqlite_dbs] lsof #{localDbPath}:"
+    console.error lsofText
+  else
+    console.error "[merge_sqlite_dbs] lsof found no current holder for #{localDbPath}"
+
 copyRemoteFile()
 copyRemoteAdapter()
 
-console.error "JIM4"
 localDb = new DatabaseSync localDbPath
 remoteDb = new DatabaseSync remoteDbCopy
 
 try
-  summarize localDb, 'local before merge'
-  summarize remoteDb, 'remote snapshot'
+  try
+    summarize localDb, 'local before merge'
+    summarize remoteDb, 'remote snapshot'
+  catch err
+    describePhaseError 'summary', err
+    throw err
 
   if opts.dryRun
     console.log "[merge_sqlite_dbs] dry-run only, no merge performed"
@@ -185,8 +210,12 @@ try
 
   backupLocalDb()
 
-  localDb.exec "ATTACH DATABASE '#{remoteDbCopy.replace(/'/g, "''")}' AS remote_db"
-  localDb.exec 'BEGIN IMMEDIATE'
+  try
+    localDb.exec "ATTACH DATABASE '#{remoteDbCopy.replace(/'/g, "''")}' AS remote_db"
+    localDb.exec 'BEGIN IMMEDIATE'
+  catch err
+    describePhaseError 'begin merge transaction', err
+    throw err
 
   try
     # HEY JIM! Local DB is authoritative for stories/KAG tables.
@@ -240,6 +269,7 @@ try
 
     localDb.exec 'COMMIT'
   catch err
+    describePhaseError 'merge transaction', err
     localDb.exec 'ROLLBACK'
     throw err
   finally
