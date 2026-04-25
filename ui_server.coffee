@@ -120,6 +120,16 @@ workspacePipeName = (workspacePath = CWD) ->
   return null if not rel? or rel.startsWith('..') or path.isAbsolute(rel) or rel is ''
   rel.split(path.sep)[0] ? null
 
+inferModelIdFromPipeName = (pipeName) ->
+  name = String(pipeName ? '').trim()
+  return '' unless name.length
+  underscoreIndex = name.indexOf('_')
+  return '' unless underscoreIndex > 0 and underscoreIndex < name.length - 1
+  organization = name.slice(0, underscoreIndex).trim()
+  modelName = name.slice(underscoreIndex + 1).trim()
+  return '' unless organization.length and modelName.length
+  "#{organization}/#{modelName}"
+
 listPipeDirectories = ->
   return [] unless fs.existsSync(PIPES_ROOT)
   names = fs.readdirSync(PIPES_ROOT).filter (name) ->
@@ -371,8 +381,29 @@ collectStepStates = ->
     String(a.step ? '').localeCompare String(b.step ? '')
 
 readOverride = ->
-  return {} unless fs.existsSync OVERRIDE_PATH
-  try yaml.load(fs.readFileSync(OVERRIDE_PATH, 'utf8')) ? {} catch then {}
+  foundational = {}
+  pipeName = workspacePipeName(CWD)
+  inferredModel = inferModelIdFromPipeName(pipeName)
+
+  parsed = if fs.existsSync(OVERRIDE_PATH)
+    try yaml.load(fs.readFileSync(OVERRIDE_PATH, 'utf8')) ? {} catch then {}
+  else
+    {}
+
+  parsed = {} unless parsed? and typeof parsed is 'object' and not Array.isArray(parsed)
+  needsWrite = false
+
+  if inferredModel.length
+    parsed.run = {} unless parsed.run? and typeof parsed.run is 'object' and not Array.isArray(parsed.run)
+    currentModel = String(parsed.run.model ? '').trim()
+    if currentModel.length is 0
+      parsed.run.model = inferredModel
+      needsWrite = true
+
+  if needsWrite or (inferredModel.length and not fs.existsSync(OVERRIDE_PATH))
+    writeText OVERRIDE_PATH, dumpYaml(parsed)
+
+  parsed
 
 readControlOverride = ->
   return {} unless fs.existsSync CONTROL_OVERRIDE_PATH
@@ -405,7 +436,6 @@ buildControls = ->
 
   overrideObject = buildOverrideObject
     pipeline: pipelineName
-    story_id: pending.story_id ? controlStoryStep.story_id ? recipeStoryStep.story_id ? ''
     scene: pending.scene ? controlStoryStep.scene ? recipeStoryStep.scene ? ''
     arrival: pending.arrival ? controlStoryStep.arrival ? recipeStoryStep.arrival ? ''
     disturbance: pending.disturbance ? controlStoryStep.disturbance ? recipeStoryStep.disturbance ? ''
@@ -424,7 +454,6 @@ buildControls = ->
 
   {
     pipeline: pipelineName
-    story_id: pending.story_id ? controlStoryStep.story_id ? recipeStoryStep.story_id ? ''
     scene: pending.scene ? controlStoryStep.scene ? recipeStoryStep.scene ? ''
     arrival: pending.arrival ? controlStoryStep.arrival ? recipeStoryStep.arrival ? ''
     disturbance: pending.disturbance ? controlStoryStep.disturbance ? recipeStoryStep.disturbance ? ''
@@ -439,11 +468,6 @@ buildControls = ->
       'diary_translate_ite'
       'story_scan'
       'lora_scan'
-    ]
-    diary_story_ids: [
-      'jim_0001'
-      'jim_0002'
-      'jim_0003'
     ]
     scene_options: makeOptions 'scenes'
     arrival_options: makeOptions 'characters'
@@ -677,7 +701,7 @@ buildLaunchPayloadFromControl = ->
     pipeline: pending.pipeline ? readOverride().pipeline ? ''
     continuous: uiControl.continuous is true
 
-  for key in ['story_id', 'scene', 'arrival', 'disturbance', 'reflection', 'realization']
+  for key in ['scene', 'arrival', 'disturbance', 'reflection', 'realization']
     payload[key] = pending[key] if pending[key]?
   payload.ui_values = Object.assign {}, (uiControl.ui_values ? {})
 
@@ -693,13 +717,6 @@ buildOverrideObject = (payload) ->
 
   if override.pipeline in diaryPipelines
     override.select_story_recipe ?= {}
-
-  if override.pipeline in diaryPipelines
-    storyID = String(payload.story_id ? '').trim()
-    if storyID.length and storyID isnt String(recipeStory.story_id ? '')
-      override.select_story_recipe.story_id = storyID
-    else
-      delete override.select_story_recipe.story_id
 
   if override.pipeline in diaryPipelines
     for key in ['scene', 'arrival', 'disturbance', 'reflection', 'realization']
@@ -738,13 +755,20 @@ writeControlOverrideText = (text) ->
 writeHumanOverrideText = (text) ->
   trimmed = String(text ? '').trim()
   if trimmed.length is 0
-    if fs.existsSync OVERRIDE_PATH
-      fs.unlinkSync OVERRIDE_PATH
-    return {}
+    parsed = readOverride()
+    return parsed
 
   writeText OVERRIDE_PATH, text
   parsed = readYaml OVERRIDE_PATH
   throw new Error 'override.yaml must parse to an object' unless parsed? and typeof parsed is 'object' and not Array.isArray(parsed)
+  pipeName = workspacePipeName(CWD)
+  inferredModel = inferModelIdFromPipeName(pipeName)
+  if inferredModel.length
+    parsed.run = {} unless parsed.run? and typeof parsed.run is 'object' and not Array.isArray(parsed.run)
+    currentModel = String(parsed.run.model ? '').trim()
+    if currentModel.length is 0
+      parsed.run.model = inferredModel
+      writeText OVERRIDE_PATH, dumpYaml(parsed)
   parsed
 
 scheduleRepeatLaunch = ->
@@ -921,7 +945,6 @@ handleLaunch = (req, res) ->
   writeUiControl
     pending:
       pipeline: pipeline
-      story_id: payload.story_id ? ''
       scene: payload.scene ? ''
       arrival: payload.arrival ? ''
       disturbance: payload.disturbance ? ''
@@ -1027,7 +1050,6 @@ handleControl = (req, res) ->
     continuous: if payload.continuous is true then true else false
     pending:
       pipeline: if pipeline.length then pipeline else (current?.pending?.pipeline ? readOverride().pipeline ? '')
-      story_id: String(payload.story_id ? '')
       scene: String(payload.scene ? '')
       arrival: String(payload.arrival ? '')
       disturbance: String(payload.disturbance ? '')
@@ -1042,7 +1064,6 @@ handleControl = (req, res) ->
   unless typeof payload.control_override_text is 'string'
     next.control_override_text = dumpYaml buildOverrideObject
       pipeline: next.pending.pipeline
-      story_id: next.pending.story_id
       scene: next.pending.scene
       arrival: next.pending.arrival
       disturbance: next.pending.disturbance

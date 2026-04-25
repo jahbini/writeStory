@@ -44,7 +44,7 @@ buildStoryGroups = (text) ->
 
   groups
 
-queryEmotionMatches = (db, emotionKeyword, limit) ->
+queryEmotionMatches = (db, emotionKeyword, limit, usedStoryIDs = null) ->
   return [] unless typeof emotionKeyword is 'string' and emotionKeyword.trim().length
 
   rows = db.prepare("""
@@ -60,6 +60,10 @@ queryEmotionMatches = (db, emotionKeyword, limit) ->
   seen = new Set()
 
   for row in rows
+    storyID = String(row?.story_id ? '').trim()
+    continue unless storyID.length
+    continue if usedStoryIDs?.has(storyID)
+
     chunkIndex = Number row?.chunk_index
     continue unless Number.isFinite(chunkIndex) and chunkIndex > 0
 
@@ -72,13 +76,14 @@ queryEmotionMatches = (db, emotionKeyword, limit) ->
     seen.add dedupeKey
 
     matches.push
-      story_id: row.story_id
+      story_id: storyID
       title: row.title ? null
       chunk_index: chunkIndex
       keyword: row.keyword ? null
       headline: row.headline ? null
       chunk_text: group.text
 
+    usedStoryIDs?.add storyID if usedStoryIDs?
     break if matches.length >= limit
 
   matches
@@ -115,9 +120,6 @@ flattenEntries = (eventMap) ->
 
     throw new Error "[#{L.stepName}] story_parts must be an object" unless storyParts? and typeof storyParts is 'object' and not Array.isArray(storyParts)
 
-    storyID = String(storyParts.story_id ? '').trim()
-    throw new Error "[#{L.stepName}] story_parts missing story_id" unless storyID.length
-
     limitRaw = L.param 'per_event_match_limit'
     limit = Number limitRaw
     throw new Error "[#{L.stepName}] per_event_match_limit must be a positive integer" unless Number.isFinite(limit) and limit > 0 and Math.floor(limit) is limit
@@ -125,11 +127,12 @@ flattenEntries = (eventMap) ->
     dbPath = path.join process.cwd(), 'runtime.sqlite'
     db = new DatabaseSync dbPath
     eventMap = {}
+    usedStoryIDs = new Set()
 
     try
       for kind in ['scene', 'arrival', 'disturbance', 'reflection', 'realization']
         selectedEmotion = String(L.param("#{kind}_emotion", '') ? '').trim()
-        matches = queryEmotionMatches db, selectedEmotion, limit
+        matches = queryEmotionMatches db, selectedEmotion, limit, usedStoryIDs
         eventMap[kind] =
           kind: kind
           selected_emotion: selectedEmotion
@@ -140,12 +143,11 @@ flattenEntries = (eventMap) ->
     flattened = flattenEntries eventMap
 
     payload =
-      story_id: storyID
+      story_id: null
       keywords: flattened.keywords
       entries: flattened.entries
       events: eventMap
 
-    console.log "[collect_diary_kag_ite] diary story:", storyID
     for own kind, row of eventMap
       console.log "[collect_diary_kag_ite] #{kind} emotion:", row.selected_emotion ? ''
       console.log "[collect_diary_kag_ite] #{kind} matches:", row.matches.length

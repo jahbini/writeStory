@@ -25,24 +25,20 @@ renderEventSupport = (kind, payload) ->
   lines.push "#{kind}:"
   lines.push "  desired emotion: #{emotion}" if emotion.length
   if matches.length is 0
-    lines.push "  raw support: none"
+    lines.push "  support: none"
     return lines.join "\n"
 
   for match in matches
-    storyID = String(match?.story_id ? '').trim()
-    chunkIndex = match?.chunk_index
     keyword = String(match?.keyword ? '').trim()
     headline = String(match?.headline ? '').trim()
-    chunkText = String(match?.chunk_text ? '').trim()
-    metaBits = []
-    metaBits.push storyID if storyID.length
-    metaBits.push "chunk #{chunkIndex}" if chunkIndex?
-    metaBits.push keyword if keyword.length
-    metaBits.push headline if headline.length
-    lines.push "  - #{metaBits.join(' / ')}"
-    if chunkText.length
-      for line in chunkText.split /\r?\n/
-        lines.push "    #{line}"
+    if keyword.length and headline.length
+      lines.push "  - #{keyword}: #{headline}"
+    else if headline.length
+      lines.push "  - #{headline}"
+    else if keyword.length
+      lines.push "  - #{keyword}"
+    else
+      lines.push "  - support cue"
   lines.join "\n"
 
 coerceJSON = (value) ->
@@ -114,7 +110,6 @@ readArtifactTarget = (L, artifactKey) ->
     for kind in ['scene', 'arrival', 'disturbance', 'reflection', 'realization']
       row = renderEventSupport kind, diaryKag?.events?[kind]
       supportLines.push row if row?
-    storyID = String(storyParts.story_id ? '').trim()
 
     prompt = [
       "You are writing in the narrative voice of Jim from St. John's."
@@ -129,13 +124,10 @@ readArtifactTarget = (L, artifactKey) ->
       "- Keep the voice observational, slightly humorous, and reflective"
       "- Return only the finished diary entry"
       ""
-      "Diary story id:"
-      "#{storyID}"
-      ""
       "Diary events:"
       if eventLines.length then eventLines.join("\n") else "- none"
       ""
-      "Event raw support passages:"
+      "Event support cues:"
       if supportLines.length then supportLines.join("\n\n") else "- none"
       ""
       "KAG cues:"
@@ -143,7 +135,6 @@ readArtifactTarget = (L, artifactKey) ->
       "Write the events in the following order: scene, arrival, disturbance, reflection, realization. make each one a separate paragraph in your writing."
     ].join "\n"
 
-    console.log "[build_diary_prompt_ite] story:", storyID
     console.log "[build_diary_prompt_ite] prompt chars:", prompt.length
 
     L.make 'diary_prompt_text', prompt

@@ -1,0 +1,54 @@
+run:
+  model: Qwen/Qwen3-4B-Instruct-2507
+  output_dir: out
+  data_dir: data
+  training_dir: build/train
+  loraLand: build/model
+  debug_s: false
+  debug_mlx: false
+  debug_sql: false
+
+artifacts:
+  dialog_source_text:
+    target: out/dialog_source.txt
+  dialog_reword_raw:
+    target: out/dialog_reword_raw.txt
+  dialog_reword_meta:
+    target: out/dialog_reword_meta.json
+  dialog_reword_text:
+    target: out/dialog_reword.txt
+
+load_dialog_source:
+  run: dialog_reword/load_dialog_source.coffee
+  depends_on: []
+  needs: []
+  makes: [dialog_source_text]
+  input_file: data/dialog_input.txt
+
+rewrite_dialog_with_adapter:
+  run: dialog_reword/rewrite_dialog_with_adapter.coffee
+  depends_on: [load_dialog_source]
+  needs: [dialog_source_text]
+  makes: [dialog_reword_raw, dialog_reword_meta, dialog_reword_text]
+  quantized_model_dir: build/model4
+  adapter_path: build/adapter
+  output_file_prefix: dialog_reword
+  keyword_hint: ""
+  rewrite_prompt_text: >
+    You are rewriting a dialog transcript through a voice adapter.
+
+    Preserve the meaning, sequence, and speaker turns.
+    Improve phrasing, rhythm, and voice.
+    Keep it as dialog.
+    Do not add scene description unless it is already present.
+    Do not summarize.
+    Return only the rewritten dialog.
+
+    Style keyword hint:
+    {keyword_hint}
+
+    Dialog to rewrite:
+    {dialog_text}
+  mlx:
+    max-tokens: 1600
+    temp: 0.7

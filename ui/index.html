@@ -411,13 +411,15 @@
           <strong id="file-modal-title" class="mono"></strong>
           <div id="file-modal-meta" class="mono hint"></div>
         </div>
-        <button id="file-modal-close" class="modal-close" type="button">X</button>
-      </div>
-      <div class="modal-body">
-        <pre id="file-modal-text"></pre>
-      </div>
-    </div>
-  </div>
+	        <button id="file-modal-close" class="modal-close" type="button">X</button>
+	        <button id="file-modal-copy" class="modal-close" type="button">Copy</button>
+	      </div>
+	      <div class="modal-body">
+	        <div id="file-modal-copy-status" class="hint mono" style="margin-bottom:8px;"></div>
+	        <pre id="file-modal-text"></pre>
+	      </div>
+	    </div>
+	  </div>
 
   <script>
     const byId = (id) => document.getElementById(id);
@@ -745,22 +747,44 @@
       byId('latest-err').textContent = data.latest_err || '';
     }
 
-    function closeFileModal() {
-      byId('file-modal-shell').classList.remove('open');
-    }
+	    function closeFileModal() {
+	      byId('file-modal-copy-status').textContent = '';
+	      byId('file-modal-shell').classList.remove('open');
+	    }
 
-    async function openFileModal(filePath) {
-      const res = await fetch(`/api/file?path=${encodeURIComponent(filePath)}`, { cache: 'no-store' });
+	    async function openFileModal(filePath) {
+	      const res = await fetch(`/api/file?path=${encodeURIComponent(filePath)}`, { cache: 'no-store' });
       const data = await res.json();
       if (!res.ok || !data.ok) {
         throw new Error(data.error || 'file open failed');
       }
-      const file = data.file || {};
-      byId('file-modal-title').textContent = file.path || '';
-      byId('file-modal-meta').textContent = `${file.size ?? 0} bytes  ${formatLocalTime(file.mtime || '')}`;
-      byId('file-modal-text').textContent = file.text || '';
-      byId('file-modal-shell').classList.add('open');
-    }
+	      const file = data.file || {};
+	      byId('file-modal-title').textContent = file.path || '';
+	      byId('file-modal-meta').textContent = `${file.size ?? 0} bytes  ${formatLocalTime(file.mtime || '')}`;
+	      byId('file-modal-copy-status').textContent = '';
+	      byId('file-modal-text').textContent = file.text || '';
+	      byId('file-modal-shell').classList.add('open');
+	    }
+
+	    async function copyFileModalText() {
+	      const text = byId('file-modal-text').textContent || '';
+	      const status = byId('file-modal-copy-status');
+	      if (!text.length) {
+	        status.textContent = 'nothing to copy';
+	        return;
+	      }
+	      try {
+	        await navigator.clipboard.writeText(text);
+	        status.textContent = `copied ${text.length} characters`;
+	      } catch (err) {
+	        const selection = window.getSelection();
+	        const range = document.createRange();
+	        range.selectNodeContents(byId('file-modal-text'));
+	        selection.removeAllRanges();
+	        selection.addRange(range);
+	        status.textContent = 'clipboard write failed; text selected for manual copy';
+	      }
+	    }
 
     async function launchPipeline() {
       if (launchBusy) return;
@@ -1041,10 +1065,13 @@
 	      selectedPipeName = event.target.value || '';
 	      byId('switch-pipe-button').disabled = !selectedPipeName || selectedPipeName === currentPipeName;
 	    });
-	    byId('merge-pipe-button').addEventListener('click', () => {
-	      mergePipe().catch(console.error);
-	    });
-	    byId('file-modal-close').addEventListener('click', closeFileModal);
+		    byId('merge-pipe-button').addEventListener('click', () => {
+		      mergePipe().catch(console.error);
+		    });
+		    byId('file-modal-copy').addEventListener('click', () => {
+		      copyFileModalText().catch(console.error);
+		    });
+		    byId('file-modal-close').addEventListener('click', closeFileModal);
     byId('file-modal-shell').addEventListener('click', (event) => {
       if (event.target === byId('file-modal-shell')) closeFileModal();
     });

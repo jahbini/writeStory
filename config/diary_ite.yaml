@@ -44,7 +44,6 @@ select_story_recipe:
   depends_on: [load_library]
   needs: [story_library]
   makes: [story_recipe]
-  story_id: jim_0003
   scene: [ UI_dropdown, data/jim_story_library.yaml/library/scenes ]
   arrival: [ UI_dropdown, data/jim_story_library.yaml/library/characters ]
   disturbance: [ UI_dropdown, data/jim_story_library.yaml/library/disturbances ]
