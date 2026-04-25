@@ -797,6 +797,15 @@
       byId('latest-err').textContent = '';
 
       try {
+        if (humanSaveTimer) {
+          window.clearTimeout(humanSaveTimer);
+          humanSaveTimer = null;
+        }
+        if (humanOverrideDirty) {
+          result.textContent = 'saving override.yaml...';
+          await saveHumanOverride();
+        }
+
         const payload = {
           pipeline: byId('pipeline-select').value,
           ui_values: collectUiValues(),
