@@ -67,6 +67,20 @@ RUNNER = path.join(EXEC_ROOT, 'pipeline_runner.coffee')
 MERGE_SCRIPT = path.join(EXEC_ROOT, 'merge_sqlite_dbs.coffee')
 
 PIPES_ROOT = path.join(EXEC_ROOT, 'pipes')
+DEFAULT_KAG_KEYWORDS = [
+  'joy'
+  'contentment'
+  'sadness'
+  'grief'
+  'fear'
+  'anxiety'
+  'anger'
+  'frustration'
+  'disgust'
+  'shame'
+  'surprise'
+  'neutral'
+]
 
 isProcessAlive = (pid) ->
   num = Number(pid)
@@ -219,7 +233,8 @@ loadDropdownOptions = (specPath) ->
   return [] unless typeof specPath is 'string' and specPath.length
   if specPath is 'db/kag_keywords'
     dbPath = path.join CWD, 'runtime.sqlite'
-    return [] unless fs.existsSync dbPath
+    fallbackRows = ({ key, label: key } for key in DEFAULT_KAG_KEYWORDS)
+    return fallbackRows unless fs.existsSync dbPath
     db = null
     try
       db = new DatabaseSync dbPath
@@ -229,12 +244,14 @@ loadDropdownOptions = (specPath) ->
         WHERE keyword IS NOT NULL AND TRIM(keyword) != ''
         ORDER BY keyword ASC
       """).all()
-      return ({
+      mapped = ({
         key: String(row.keyword)
         label: String(row.keyword)
       } for row in rows when row?.keyword?)
+      return mapped if mapped.length
+      return fallbackRows
     catch
-      return []
+      return fallbackRows
     finally
       try db?.close() catch then null
   parts = specPath.split('/')
@@ -410,8 +427,14 @@ readControlOverride = ->
   try yaml.load(fs.readFileSync(CONTROL_OVERRIDE_PATH, 'utf8')) ? {} catch then {}
 
 readYaml = (p) ->
-  return {} unless fs.existsSync p
-  try yaml.load(fs.readFileSync(p, 'utf8')) ? {} catch then {}
+  target = p
+  if not fs.existsSync(target) and typeof p is 'string'
+    rel = path.relative(CWD, p)
+    if rel? and not rel.startsWith('..') and not path.isAbsolute(rel)
+      fallback = path.join(EXEC_ROOT, rel)
+      target = fallback if fs.existsSync(fallback)
+  return {} unless fs.existsSync target
+  try yaml.load(fs.readFileSync(target, 'utf8')) ? {} catch then {}
 
 buildControls = ->
   override = readOverride()
