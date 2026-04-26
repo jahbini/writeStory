@@ -27,8 +27,21 @@ download_model:
   makes: []
   loraLand: build/model
 
+quantize_model:
+  debug_s: true
+  run: kag_oracle/quantize_model.coffee
+  depends_on: [download_model]
+  needs: []
+  makes: []
+  source_model_dir: build/model
+  quantized_model_dir: build/model4
+  quantized_model_memo_key: quantizedModelDir
+  mlx:
+    quantize: null
+    q-bits: 4
+
 seed_story_sqlite:
   run: kag_oracle_ite/seed_story_sqlite.coffee
-  depends_on: [download_model]
+  depends_on: [quantize_model]
   needs: [stories_md]
   makes: [story_seed_ids]

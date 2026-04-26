@@ -670,7 +670,7 @@
         : (blockingMatch ? blockingMatch[1] : null);
       const killable = Number.isInteger(Number(pid)) && !['done', 'failed', 'shutdown'].includes(status);
 
-      if (status === 'skipped' && blockingPid) {
+      if (blockingPid) {
         button.disabled = false;
         button.textContent = `Kill Blocking PID ${blockingPid}`;
         return;

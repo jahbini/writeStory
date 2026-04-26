@@ -1002,7 +1002,7 @@ handleKill = (req, res) ->
   pid = Number(run?.pid ? 0)
   targetKind = 'run'
 
-  if run?.status is 'skipped' and Array.isArray(run?.other_runners) and run.other_runners.length > 0
+  if Array.isArray(run?.other_runners) and run.other_runners.length > 0
     first = run.other_runners[0]
     if typeof first?.pid is 'number' and first.pid > 0
       pid = Number(first.pid)

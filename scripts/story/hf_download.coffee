@@ -52,6 +52,11 @@ writeProvenance = (targetDir, modelId, repoUrl) ->
     recorded_at: new Date().toISOString()
   fs.writeFileSync provPath, JSON.stringify(payload, null, 2), 'utf8'
 
+stripGitDirectory = (targetDir) ->
+  gitDir = path.join targetDir, '.git'
+  return unless fs.existsSync gitDir
+  run 'rm', ['-rf', gitDir]
+
 modelTail = (modelId) ->
   return '' unless modelId?
   String(modelId).split('/').pop() ? ''
@@ -161,6 +166,7 @@ resolveRequestedModelId = (requestedModelId, provenance = null) ->
         throw new Error "No model weights found" unless hasWeights
 
         writeProvenance targetDir, hfModelId, repoUrl
+        stripGitDirectory targetDir
 
         console.log "[init] Model successfully materialized."
         return
