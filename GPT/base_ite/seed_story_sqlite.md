@@ -20,6 +20,7 @@ Invariants:
 - missing `allStories.jsonl` materialization must be treated like `[]`
 - story headings come from markdown lines starting with `# `
 - assumes the SQLite handle is already open in the runner; upstream reset must clear tables, not unlink `runtime.sqlite`
+- in current `base_ite`, this step runs after quantization; story seeding is intentionally downstream of all base-model preparation
 
 Downstream consumers:
 - `oracle_ite`

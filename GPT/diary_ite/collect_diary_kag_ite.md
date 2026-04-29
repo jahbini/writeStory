@@ -22,6 +22,7 @@ Current matching mode:
 - match by `kag_entries.keyword`
 - use DB-returned `story_id` and `chunk_index`
 - derive the exact chunk text from the matched story text using the canonical 5-group rule
+- each contributing source `story_id` may appear at most once across the whole diary prompt
 
 Important KAG fields:
 - `keyword`
@@ -38,5 +39,6 @@ Current payload shape:
 - flat `diary_kag.entries` remains as a compatibility summary
 
 Known pitfalls:
+- do not require `story_parts.story_id`; diary selection is now driven by explicit event keys, not a legacy preset story id
 - do not reintroduce `pretend_story_ids`
 - do not invent chunk identity outside the DB KAG rows

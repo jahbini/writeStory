@@ -18,9 +18,13 @@ Current event source:
 Invariants:
 - `diary_prompt_text` must be produced before either diary generator runs
 - `generate_diary_with_adapter_ite` and `generate_diary_without_adapter_ite` are sibling consumers
-- prompt should include raw source passages from `diary_kag.events.<kind>.matches`
+- the final prompt should stay compact and should not paste raw `chunk_text`
+- prompt support cues should use semantic fields such as `keyword` and `headline`
+- prompt should not expose retrieval bookkeeping like source `story_id` or `chunk` labels
+- `Diary story id:` is obsolete and should not appear in the prompt
 
 Known pitfalls:
 - if downstream sees bad `diary_prompt_text`, inspect merged graph in `experiment.yaml`
 - invalid override semantics can break this step indirectly
-- DB-backed raw support passages are now preferred over generic flat KAG cue lists
+- heavy raw support passages can make the adapter bloviate
+- repeated reuse of one source story can bend the diary too hard toward one image cluster

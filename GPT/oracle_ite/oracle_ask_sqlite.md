@@ -6,7 +6,7 @@ Purpose:
 
 Inputs:
 - meta read `storiesMissingKag.jsonl`
-- params `prompt_text`, `batch_size`, `model_dir` or `quantized_model_memo_key`
+- params `prompt_text`, `batch_size`, `model_dir`
 - optional `adapter_path`
 - optional `mlx` object, which must be passed through to MLX generate
 
@@ -40,4 +40,4 @@ KAG shape:
 Known pitfalls:
 - do not revert to whole-story-only prompting
 - do not reintroduce overlapping retry windows
-- if oracle OOM appears after a rebuild, inspect `quantize_model` first; a convert-only `build/model4` can look valid but be far too large
+- if oracle OOM appears after a rebuild, inspect `base_ite` quantization first; a convert-only `build/model4` can look valid but be far too large

@@ -16,7 +16,8 @@ Outputs:
 - possible meta write `pipeline:shutdown`
 
 Selection rule:
-- select stories with `use_count <= 0`
+- prioritize stories by lowest `use_count`
+- when several stories share the same `use_count`, shuffle within that bucket instead of using a fixed story-id order
 
 Cycle rule:
 - when no stories remain, mark cycle complete and shutdown cleanly

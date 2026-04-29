@@ -33,6 +33,11 @@ Current behavior:
 - uses `diary_kag.events.<kind>.matches` when present
 - falls back to scoring flat `diary_kag.entries` only if event matches are absent
 
+Prompt/voice notes:
+- surreal ornament is desired in this project
+- the main quality risk is not surrealism itself, but repetitive reflective scaffolding driven by prompt pressure
+- if sections keep recurring on abstractions like silence, signal, proof, listening, or quiet, inspect the prompt before blaming adapter depth
+
 Adapter-specific rule:
 - for sections after the first, add:
   - `Transition naturally from the previous diary section into this event`

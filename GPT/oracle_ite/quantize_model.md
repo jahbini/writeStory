@@ -1,5 +1,8 @@
 Step: `quantize_model`
-Recipe: `oracle_ite`
+Historical recipe:
+- `oracle_ite`
+Current recipe:
+- `base_ite`
 
 Purpose:
 - build the small oracle MLX model in `build/model4` from `build/model`
@@ -11,6 +14,10 @@ Inputs:
 Outputs:
 - meta write `quantizedModelDir`
 - filesystem output `build/model4`
+
+Current role:
+- `oracle_ite` now assumes `build/model4` already exists
+- if oracle behavior depends on this step, inspect `base_ite` first
 
 Quantization contract:
 - this step must perform real MLX quantization, not just format conversion

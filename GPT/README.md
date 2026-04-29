@@ -4,6 +4,7 @@ Purpose:
 - keep step-local memory outside the transient conversation
 - record proven contracts and costly failure modes
 - help trace downstream failures back to upstream causes
+- preserve current pipe/workspace assumptions so future Codex work does not drift back to older top-level-only behavior
 
 Rules:
 - keep files short and factual
@@ -12,6 +13,13 @@ Rules:
 - record inputs, outputs, invariants, and pitfalls
 - if a stale machine bug is diagnosed from logs, update the affected step memory so the failure mode is explicit
 - do not use this directory for general notes or speculation
+
+Current repository assumptions worth preserving:
+- the repo is pipe-centric; active workspaces live under `pipes/<organization>_<model>/`
+- `override.yaml` is foundational and must carry the base `run.model`
+- `control_override.yaml` is UI-owned run control, not a replacement for `override.yaml`
+- new empty pipes infer their model identity from the pipe directory name
+- `base_ite` now owns base preparation through quantization, so downstream inference recipes consume prepared artifacts instead of rebuilding them
 
 Suggested use:
 - when a step fails, inspect its memory file first
