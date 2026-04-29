@@ -5,6 +5,7 @@
 *.tgz
 
 node_modules/
+pipes/
 pnpm-lock.yaml
 
 # Python
