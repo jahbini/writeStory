@@ -84,7 +84,6 @@ generate_diary_with_adapter_ite:
   mlx:
     max-tokens: 2000
     temp: 0.7
-    min-tokens: 500
 
 generate_diary_without_adapter_ite:
   run: diary_ite/generate_diary_event_ordered_ite.coffee
@@ -95,4 +94,3 @@ generate_diary_without_adapter_ite:
   mlx:
     max-tokens: 2000
     temp: 0.7
-    min-tokens: 500

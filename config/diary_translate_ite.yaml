@@ -83,7 +83,6 @@ generate_diary_without_adapter_ite:
   mlx:
     max-tokens: 2000
     temp: 0.7
-    min-tokens: 500
 
 translate_diary_with_adapter_ite:
   run: diary_ite/translate_diary_with_adapter_ite.coffee
@@ -107,4 +106,3 @@ translate_diary_with_adapter_ite:
   mlx:
     max-tokens: 2000
     temp: 0.7
-    min-tokens: 500
