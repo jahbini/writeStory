@@ -135,79 +135,69 @@ renderKagLines = (entries) ->
   for entry in (entries ? [])
     keyword = String(entry?.keyword ? '').trim()
     headline = String(entry?.headline ? '').trim()
-    chunkIndex = entry?.chunk_index
-    label = []
-    label.push "chunk #{chunkIndex}" if chunkIndex?
-    label.push keyword if keyword.length
-    prefix = if label.length then "- #{label.join(' / ')}" else "- cue"
-    if headline.length
-      lines.push "#{prefix}: #{headline}"
-    else
-      lines.push prefix
+    if keyword.length and headline.length
+      lines.push "- #{keyword}: #{headline}"
+    else if headline.length
+      lines.push "- #{headline}"
+    else if keyword.length
+      lines.push "- #{keyword}"
   lines
 
-renderSourcePassages = (matches) ->
-  lines = []
-  for match in (matches ? [])
-    storyID = String(match?.story_id ? '').trim()
-    chunkIndex = match?.chunk_index
-    keyword = String(match?.keyword ? '').trim()
-    headline = String(match?.headline ? '').trim()
-    chunkText = String(match?.chunk_text ? '').trim()
-    metaBits = []
-    metaBits.push storyID if storyID.length
-    metaBits.push "chunk #{chunkIndex}" if chunkIndex?
-    metaBits.push keyword if keyword.length
-    metaBits.push headline if headline.length
-    lines.push "- #{metaBits.join(' / ')}"
-    if chunkText.length
-      for line in chunkText.split /\r?\n/
-        lines.push "  #{line}"
-  lines
+normalizeSpacing = (text) ->
+  String(text ? '').replace(/\s+/g, ' ').trim()
 
-buildEventPrompt = (storyID, kind, event, chosenEntries, chosenMatches, priorSections, mode) ->
+clipText = (text, maxChars = 280) ->
+  flat = normalizeSpacing text
+  return flat unless flat.length > maxChars
+  "#{flat.slice(0, maxChars).trim()}..."
+
+renderPriorHistory = (priorSections, maxSections = 3) ->
+  rows = priorSections.slice(-maxSections).map (section) ->
+    "#{section.kind}: #{clipText(section.text)}"
+  if rows.length then rows.join("\n") else "- none"
+
+buildEventPrompt = (kind, event, chosenEntries, priorSections, mode) ->
   eventBlock = describeEvent kind, event
   kagLines = renderKagLines chosenEntries
-  sourceLines = renderSourcePassages chosenMatches
-  historyText = priorSections.map((section) -> "#{section.kind}:\n#{section.text}").join "\n\n"
+  historyText = renderPriorHistory priorSections
   transitionRule = null
-  if mode is 'adapter' and priorSections.length > 0
-    transitionRule = "- Transition naturally from the previous diary section into this event"
+  if priorSections.length > 0
+    transitionRule = "- Begin with a natural transition from the previous section into this event"
 
   promptLines = [
     "You are writing in the narrative voice of Jim from St. John's."
     ""
-    "Write only the next diary section."
+    "Write exactly one diary section."
     "Do not write the whole diary."
     "Stay in first person."
-    "Use the current event as the focus."
-    "Use the KAG cues as emotional guidance."
-    "Preserve continuity with the prior diary sections."
     ""
-    "Rules:"
-    "- Keep the narration concrete and grounded"
-    "- Keep the tone observational, slightly humorous, and reflective"
+    "Instructions:"
+    "- The Current event is the primary subject of the section"
+    "- Build the section around what can be directly seen, heard, felt, remembered, or reasonably inferred in that event"
+    "- Use the tone guidance only for emotional color"
+    "- Do not replace the event with unrelated imagery, side riffs, or borrowed situations from the tone guidance"
+    "- Do not reuse names, places, objects, or jokes from the tone guidance unless they are already present in the Current event or Prior context"
+    "- Keep the voice concrete, observational, slightly humorous, and reflective"
+    "- If something cannot be physically observed, minimize it or justify it clearly from the narrator's point of view"
     "- Do not contradict earlier sections"
     "- Do not summarize future events"
-    "- Return only the current section prose"
+    "- Return only the prose for this one section"
   ]
 
   promptLines.push transitionRule if transitionRule?
   promptLines.push ""
-  promptLines.push "Diary story id:"
-  promptLines.push "#{storyID}"
-  promptLines.push ""
-  promptLines.push "Prior diary history:"
-  promptLines.push if historyText.length then historyText else "- none"
+  promptLines.push "Prior context:"
+  promptLines.push historyText
   promptLines.push ""
   promptLines.push "Current event:"
   promptLines.push if eventBlock? then eventBlock else "- none"
   promptLines.push ""
-  promptLines.push "Current KAG cues:"
+  promptLines.push "Tone guidance:"
+  promptLines.push "Use these only for emotional coloring and pressure, not for plot content."
   promptLines.push if kagLines.length then kagLines.join("\n") else "- none"
   promptLines.push ""
-  promptLines.push "Raw source passages:"
-  promptLines.push if sourceLines.length then sourceLines.join("\n") else "- none"
+  promptLines.push "Output constraint:"
+  promptLines.push "- Write one natural diary paragraph or short diary section focused on the Current event only."
 
   promptLines.join "\n"
 
@@ -261,7 +251,6 @@ callDiaryGenerate = (L, modelDir, prompt, adapterPath, mlxConfig) ->
     diaryKag = normalizeDiaryKag diaryKag
     throw new Error "[#{L.stepName}] diary_kag must be an object with entries" unless Array.isArray(diaryKag?.entries)
 
-    storyID = String(storyParts.story_id ? '').trim()
     modelDir = L.param 'quantized_model_dir', null
     adapterPath = L.param 'adapter_path', null
     mlxConfig = L.param 'mlx', null
@@ -285,7 +274,7 @@ callDiaryGenerate = (L, modelDir, prompt, adapterPath, mlxConfig) ->
 
       chosenMatches = resolveEventMatches diaryKag, kind
       chosenEntries = if chosenMatches.length > 0 then chosenMatches else pickEventKagEntries diaryKag.entries, kind, event, 4
-      prompt = buildEventPrompt storyID, kind, event, chosenEntries, chosenMatches, priorSections, modeInfo.mode
+      prompt = buildEventPrompt kind, event, chosenEntries, priorSections, modeInfo.mode
       rawOutput = callDiaryGenerate L, modelDir, prompt, adapterPath, mlxConfig
       sectionText = cleanGeneratedText prompt, rawOutput
 
@@ -308,7 +297,7 @@ callDiaryGenerate = (L, modelDir, prompt, adapterPath, mlxConfig) ->
     finalText = priorSections.map((section) -> section.text).join "\n\n"
     rawJoined = rawSections.map((section) -> "[#{section.kind}]\n#{section.raw}").join "\n\n==========\n\n"
     meta =
-      story_id: storyID
+      story_id: String(storyParts.story_id ? '').trim() or null
       mode: modeInfo.mode
       model_dir: modelDir
       adapter_path: if modeInfo.mode is 'adapter' then adapterPath else null
@@ -321,7 +310,7 @@ callDiaryGenerate = (L, modelDir, prompt, adapterPath, mlxConfig) ->
       raw_chars: rawJoined.length
       text_chars: finalText.length
 
-    console.log "[#{L.stepName}] story:", storyID
+    console.log "[#{L.stepName}] story:", String(storyParts.story_id ? '').trim()
     console.log "[#{L.stepName}] section count:", priorSections.length
     console.log "[#{L.stepName}] text chars:", finalText.length
 
