@@ -156,10 +156,19 @@ renderPriorHistory = (priorSections, maxSections = 3) ->
     "#{section.kind}: #{clipText(section.text)}"
   if rows.length then rows.join("\n") else "- none"
 
+lastLineOf = (text) ->
+  lines = String(text ? '').split /\r?\n/
+  rows = (line.trim() for line in lines when line.trim().length)
+  if rows.length then rows[rows.length - 1] else "- none"
+
+renderSceneHints = (kind, event) ->
+  eventBlock = describeEvent kind, event
+  if eventBlock? then eventBlock else "- none"
+
 buildEventPrompt = (kind, event, chosenEntries, priorSections, mode) ->
+  historyText = renderPriorHistory priorSections
   eventBlock = describeEvent kind, event
   kagLines = renderKagLines chosenEntries
-  historyText = renderPriorHistory priorSections
   transitionRule = null
   if priorSections.length > 0
     transitionRule = "- Begin with a natural transition from the previous section into this event"
@@ -167,25 +176,24 @@ buildEventPrompt = (kind, event, chosenEntries, priorSections, mode) ->
   promptLines = [
     "You are writing in the narrative voice of Jim from St. John's."
     ""
-    "Write one diary section."
+    "Write exactly one diary section."
+    "Do not write the whole diary."
     "Stay in first person."
     ""
     "Instructions:"
-    "- Write like an old man remembering imperfectly from years later"
-    "- Keep the Current event as the center of the section, and open with a concrete element from it"
-    "- Build the section from what can be directly seen, heard, felt, remembered, or reasonably inferred from the Current event"
-    "- The section may ramble, repeat itself, drift briefly, or circle back when the drift is triggered by the Current event, but it must stay anchored to the present scene and return to the Current event by the end"
-    "- Small contradictions are allowed when they feel like memory, not random error"
-    "- Invent new animals, objects, incidents, or symbolic imagery only when they are already present in the Current event or Prior context"
-    "- Use tone guidance only as emotional weather, and reuse its details only when they are already present in the Current event or Prior context"
-    "- Keep the voice concrete, local, funny, reflective, and slightly rambling"
-    "- Be human before literary; avoid polished generic prose"
-    "- If something cannot be physically observed, minimize it or justify it from the narrator's point of view"
-    "- Avoid random new locations unless they are clearly remembered from the Current event"
-    "- Include at least one physical anchor such as sight, sound, smell, touch, gesture, object, weather, light, body sensation, action, or spoken line"
-    "- Speak in observation, inference, or uncertainty instead of absolute truth"
-    "- Keep continuity with earlier sections"
-    "- Stay inside the present section instead of summarizing future events"
+    "- The Current event is the primary subject of the section"
+    "- Build the section around what can be directly seen, heard, felt, remembered, or reasonably inferred in that event"
+    "- Use the tone guidance only for emotional color"
+    "- Do not replace the event with unrelated imagery, side riffs, or borrowed situations from the tone guidance"
+    "- Do not reuse names, places, objects, or jokes from the tone guidance unless they are already present in the Current event or Prior context"
+    "- Keep the voice concrete, observational, slightly humorous, and reflective"
+    "- If something cannot be physically observed, minimize it or justify it clearly from the narrator's point of view"
+    "- Stay in one physical location for the whole section"
+    "- Use at most one metaphor in the section"
+    "- Show at least one physical action or one spoken line in the section"
+    "- Do not claim absolute truth; speak in observation, inference, or uncertainty"
+    "- Do not contradict earlier sections"
+    "- Do not summarize future events"
     "- Return only the prose for this one section"
   ]
 
@@ -198,10 +206,11 @@ buildEventPrompt = (kind, event, chosenEntries, priorSections, mode) ->
   promptLines.push if eventBlock? then eventBlock else "- none"
   promptLines.push ""
   promptLines.push "Tone guidance:"
+  promptLines.push "Use these only for emotional coloring and pressure, not for plot content."
   promptLines.push if kagLines.length then kagLines.join("\n") else "- none"
   promptLines.push ""
   promptLines.push "Output constraint:"
-  promptLines.push "- Write one natural diary section with no title and no explanation."
+  promptLines.push "- Write one natural diary paragraph or short diary section focused on the Current event only."
 
   promptLines.join "\n"
 
