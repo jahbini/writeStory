@@ -51,8 +51,11 @@ module.exports = (M, opts={}) ->
       doc_id TEXT,
       paragraph_index TEXT,
       chunk_index INTEGER,
+      start_paragraph INTEGER,
+      end_paragraph INTEGER,
       keyword TEXT,
       headline TEXT,
+      chunk_text TEXT,
       entry_json TEXT,
       PRIMARY KEY (story_id, entry_index)
     );
@@ -107,13 +110,28 @@ module.exports = (M, opts={}) ->
 
     kagColumns = db.prepare("PRAGMA table_info(kag_entries)").all()
     hasKagChunkIndex = false
+    hasKagStartParagraph = false
+    hasKagEndParagraph = false
+    hasKagChunkText = false
     for row in kagColumns
-      if String(row?.name ? '') is 'chunk_index'
+      name = String(row?.name ? '')
+      if name is 'chunk_index'
         hasKagChunkIndex = true
-        break
+      else if name is 'start_paragraph'
+        hasKagStartParagraph = true
+      else if name is 'end_paragraph'
+        hasKagEndParagraph = true
+      else if name is 'chunk_text'
+        hasKagChunkText = true
 
     unless hasKagChunkIndex
       db.exec "ALTER TABLE kag_entries ADD COLUMN chunk_index INTEGER"
+    unless hasKagStartParagraph
+      db.exec "ALTER TABLE kag_entries ADD COLUMN start_paragraph INTEGER"
+    unless hasKagEndParagraph
+      db.exec "ALTER TABLE kag_entries ADD COLUMN end_paragraph INTEGER"
+    unless hasKagChunkText
+      db.exec "ALTER TABLE kag_entries ADD COLUMN chunk_text TEXT"
 
     FORMATTERS =
       json:
@@ -299,9 +317,12 @@ module.exports = (M, opts={}) ->
                 chunk_index: row.chunk_index
                 keyword: row.keyword
                 headline: row.headline
+                chunk_text: row.chunk_text
                 meta:
                   chunk_index: row.chunk_index
                   group_index: row.chunk_index
+                  start_paragraph: row.start_paragraph
+                  end_paragraph: row.end_paragraph
 
             entries.push entry
 
@@ -335,9 +356,9 @@ module.exports = (M, opts={}) ->
 
             insertStatement = db.prepare("""
               INSERT INTO kag_entries (
-                story_id, entry_index, doc_id, paragraph_index, chunk_index, keyword, headline, entry_json
+                story_id, entry_index, doc_id, paragraph_index, chunk_index, start_paragraph, end_paragraph, keyword, headline, chunk_text, entry_json
               )
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """)
 
             entryIndex = 1
@@ -345,8 +366,11 @@ module.exports = (M, opts={}) ->
               docID = entry?.doc_id ? entry?.meta?.doc_id ? null
               paragraphIndex = entry?.paragraph_index ? entry?.meta?.paragraph_index ? null
               chunkIndex = entry?.chunk_index ? entry?.meta?.chunk_index ? entry?.meta?.group_index ? null
+              startParagraph = entry?.start_paragraph ? entry?.meta?.start_paragraph ? entry?.meta?.group_start_paragraph ? null
+              endParagraph = entry?.end_paragraph ? entry?.meta?.end_paragraph ? entry?.meta?.group_end_paragraph ? null
               keyword = entry?.keyword ? null
               headline = entry?.headline ? entry?.label ? entry?.text ? null
+              chunkText = entry?.chunk_text ? entry?.meta?.chunk_text ? null
 
               insertStatement.run(
                 writeStoryID
@@ -354,8 +378,11 @@ module.exports = (M, opts={}) ->
                 docID
                 paragraphIndex
                 chunkIndex
+                startParagraph
+                endParagraph
                 keyword
                 headline
+                chunkText
                 JSON.stringify(entry)
               )
 

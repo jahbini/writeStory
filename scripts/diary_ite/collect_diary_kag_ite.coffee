@@ -48,7 +48,7 @@ queryEmotionMatches = (db, emotionKeyword, limit, usedStoryIDs = null) ->
   return [] unless typeof emotionKeyword is 'string' and emotionKeyword.trim().length
 
   rows = db.prepare("""
-    SELECT kag_entries.story_id, stories.title, stories.text, kag_entries.chunk_index, kag_entries.keyword, kag_entries.headline, kag_entries.entry_index
+    SELECT kag_entries.story_id, stories.title, stories.text, kag_entries.chunk_index, kag_entries.start_paragraph, kag_entries.end_paragraph, kag_entries.chunk_text, kag_entries.keyword, kag_entries.headline, kag_entries.entry_index
     FROM kag_entries
     INNER JOIN stories
       ON stories.story_id = kag_entries.story_id
@@ -67,9 +67,15 @@ queryEmotionMatches = (db, emotionKeyword, limit, usedStoryIDs = null) ->
     chunkIndex = Number row?.chunk_index
     continue unless Number.isFinite(chunkIndex) and chunkIndex > 0
 
-    groups = buildStoryGroups row?.text ? ''
-    group = groups[chunkIndex - 1]
-    continue unless group?
+    chunkText = String(row?.chunk_text ? '').trim()
+    startParagraph = Number row?.start_paragraph
+    endParagraph = Number row?.end_paragraph
+
+    if chunkText.length is 0
+      groups = buildStoryGroups row?.text ? ''
+      group = groups[chunkIndex - 1]
+      continue unless group?
+      chunkText = group.text
 
     dedupeKey = "#{row.story_id}|#{chunkIndex}|#{row.keyword}|#{row.headline ? ''}"
     continue if seen.has dedupeKey
@@ -79,9 +85,11 @@ queryEmotionMatches = (db, emotionKeyword, limit, usedStoryIDs = null) ->
       story_id: storyID
       title: row.title ? null
       chunk_index: chunkIndex
+      start_paragraph: if Number.isFinite(startParagraph) then startParagraph else null
+      end_paragraph: if Number.isFinite(endParagraph) then endParagraph else null
       keyword: row.keyword ? null
       headline: row.headline ? null
-      chunk_text: group.text
+      chunk_text: chunkText
 
     usedStoryIDs?.add storyID if usedStoryIDs?
     break if matches.length >= limit
@@ -99,6 +107,8 @@ flattenEntries = (eventMap) ->
         story_id: match.story_id
         kind: kind
         chunk_index: match.chunk_index
+        start_paragraph: match.start_paragraph
+        end_paragraph: match.end_paragraph
         keyword: match.keyword
         headline: match.headline
         chunk_text: match.chunk_text
