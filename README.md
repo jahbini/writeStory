@@ -1,4 +1,21 @@
 # writeStory
+writeStory uses a pipeline system that turns ML research notebooks and proof of concepts into
+production-grade bullet proof execution graphs without rewriting the logic.
+
+It replaces notebooks with:
+- a reactive in-memory data model (Memo)
+- a DAG scheduler derived from step dependencies
+- transparent persistence via meta devices (YAML/JSON/SQLite)
+
+The system currently supports:
+- MLX-based LoRA fine-tuning
+- keyword-augmented retrieval (KAG)
+- emotion-conditioned story generation
+- restartable, inspectable pipeline execution
+
+The goal is simple:
+Research code should harden into production infrastructure,
+not be rewritten into it.
 
 `writeStory` is a CoffeeScript pipeline system for story processing, oracle tagging, LoRA training, and diary generation. The repository is organized around a single runner, a memo-based artifact model, and per-model workspaces under `pipes/`.
 
