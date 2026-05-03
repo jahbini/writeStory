@@ -169,50 +169,50 @@ buildEventPrompt = (kind, event, chosenEntries, priorSections, mode) ->
   historyText = renderPriorHistory priorSections
   eventBlock = describeEvent kind, event
   kagLines = renderKagLines chosenEntries
-  transitionRule = null
-  if priorSections.length > 0
-    transitionRule = "- Begin with a natural transition from the previous section into this event"
+  previousEnding = if priorSections.length > 0 then lastLineOf(priorSections[priorSections.length - 1].text) else "- none"
+  sceneHints = renderSceneHints kind, event
+  toneNotes = if kagLines.length then kagLines.join("\n") else "- none"
 
-  promptLines = [
+  [
     "You are writing in the narrative voice of Jim from St. John's."
     ""
-    "Write exactly one diary section."
-    "Do not write the whole diary."
-    "Stay in first person."
+    "Write one diary section."
+    "First person."
+    "Continue from what already happened."
     ""
-    "Instructions:"
-    "- The Current event is the primary subject of the section"
-    "- Build the section around what can be directly seen, heard, felt, remembered, or reasonably inferred in that event"
-    "- Use the tone guidance only for emotional color"
-    "- Do not replace the event with unrelated imagery, side riffs, or borrowed situations from the tone guidance"
-    "- Do not reuse names, places, objects, or jokes from the tone guidance unless they are already present in the Current event or Prior context"
-    "- Keep the voice concrete, observational, slightly humorous, and reflective"
-    "- If something cannot be physically observed, minimize it or justify it clearly from the narrator's point of view"
-    "- Stay in one physical location for the whole section"
-    "- Use at most one metaphor in the section"
-    "- Show at least one physical action or one spoken line in the section"
-    "- Do not claim absolute truth; speak in observation, inference, or uncertainty"
-    "- Do not contradict earlier sections"
-    "- Do not summarize future events"
-    "- Return only the prose for this one section"
-  ]
-
-  promptLines.push transitionRule if transitionRule?
-  promptLines.push ""
-  promptLines.push "Prior context:"
-  promptLines.push historyText
-  promptLines.push ""
-  promptLines.push "Current event:"
-  promptLines.push if eventBlock? then eventBlock else "- none"
-  promptLines.push ""
-  promptLines.push "Tone guidance:"
-  promptLines.push "Use these only for emotional coloring and pressure, not for plot content."
-  promptLines.push if kagLines.length then kagLines.join("\n") else "- none"
-  promptLines.push ""
-  promptLines.push "Output constraint:"
-  promptLines.push "- Write one natural diary paragraph or short diary section focused on the Current event only."
-
-  promptLines.join "\n"
+    "INPUTS:"
+    "prior: #{historyText}"
+    "last: #{previousEnding}"
+    "event: #{if eventBlock? then eventBlock else '- none'}"
+    "tone: #{toneNotes}"
+    "hints: #{sceneHints}"
+    ""
+    "The reader loves:"
+    "- continuing from the last moment without restarting the scene"
+    "- an old man remembering imperfectly, with some drift and circling"
+    "- the event staying at the center, even when the thought wanders"
+    "- concrete things: body, place, sound, light, objects, gestures, speech"
+    "- one small action or one spoken line"
+    "- mild uncertainty: \"I think\", \"maybe\", \"could be wrong\""
+    "- repetition with variation that returns attention to the same thing"
+    ""
+    "The reader dislikes:"
+    "- restarting the setup or re-describing the whole scene"
+    "- exact repeated phrases or sentences"
+    "- explaining the inputs"
+    "- using tone notes as action or plot"
+    "- jumping to new locations or unrelated situations"
+    ""
+    "WRITE:"
+    "- one diary section only"
+    "- stay in one physical place"
+    "- use at most one metaphor"
+    "- let thoughts drift, but return to the event by the end"
+    "- use tone only to shape the feeling of the event. Keep it separate from the action."
+    "- use hints only if they help, and only lightly"
+    ""
+    "Return only the diary prose."
+  ].join "\n"
 
 resolveMode = (L) ->
   if /with_adapter/.test(L.stepName)
