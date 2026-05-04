@@ -433,6 +433,18 @@
     let humanSaveTimer = null;
     let currentPipeName = '';
     let selectedPipeName = '';
+    let refreshTimer = null;
+
+    function startRefreshLoop() {
+      if (refreshTimer) return;
+      refreshTimer = window.setInterval(() => refresh().catch(console.error), 2000);
+    }
+
+    function stopRefreshLoop() {
+      if (!refreshTimer) return;
+      window.clearInterval(refreshTimer);
+      refreshTimer = null;
+    }
 
     function uiEditorHasFocus() {
       const active = document.activeElement;
@@ -712,6 +724,11 @@
       });
       byId('subtitle').textContent = `${pipe.current || ''}  ${run.pipeline || ''}  ${run.hh_mm || ''}  ${run.logdir || ''}`.trim();
       const status = run.status || 'unknown';
+      if (['launching', 'running', 'killing', 'skipped', 'cooldown'].includes(status)) {
+        startRefreshLoop();
+      } else {
+        stopRefreshLoop();
+      }
       const statusEl = byId('run-status');
       statusEl.textContent = status;
       statusEl.className = `status ${status}`;
@@ -789,6 +806,7 @@
     async function launchPipeline() {
       if (launchBusy) return;
       launchBusy = true;
+      startRefreshLoop();
       const launchButton = byId('launch-button');
       const result = byId('launch-result');
       launchButton.disabled = true;
@@ -1032,7 +1050,6 @@
     }
 
     refresh().catch(console.error);
-    setInterval(() => refresh().catch(console.error), 2000);
     byId('pipeline-select').addEventListener('change', () => {
       controlsDirty = true;
       saveControlState().catch((err) => {

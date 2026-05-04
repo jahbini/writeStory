@@ -163,12 +163,19 @@ lastLineOf = (text) ->
   if rows.length then rows[rows.length - 1] else "- none"
 
 renderSceneHints = (kind, event) ->
-  eventBlock = describeEvent kind, event
-  if eventBlock? then eventBlock else "- none"
+  return "- none" unless event? and typeof event is 'object'
+  lines = []
+  location = String(event.location ? '').trim()
+  character = String(event.character ? '').trim()
+  theme = String(event.theme ? '').trim()
+  lines.push "location: #{location}" if location.length
+  lines.push "character: #{character}" if character.length
+  lines.push "theme: #{theme}" if theme.length
+  if lines.length then lines.join("\n") else "- none"
 
 buildEventPrompt = (kind, event, chosenEntries, priorSections, mode) ->
   historyText = renderPriorHistory priorSections, 3, true
-  eventBlock = describeEvent kind, event
+  eventText = String(event?.text ? '').trim()
   kagLines = renderKagLines chosenEntries
   previousEnding = if priorSections.length > 0 then lastLineOf(priorSections[priorSections.length - 1].text) else "- none"
   sceneHints = renderSceneHints kind, event
@@ -185,7 +192,7 @@ buildEventPrompt = (kind, event, chosenEntries, priorSections, mode) ->
     "prior: #{historyText}"
     "tone: #{toneNotes}"
     "hints: #{sceneHints}"
-    "event: #{if eventBlock? then "This is what happens in this section: " + eventBlock else '- none'}"
+    "event: #{if eventText.length then eventText else '- none'}"
     ""
     "The reader loves:"
     "- continuing with the event from the prior moment without restarting the scene"
