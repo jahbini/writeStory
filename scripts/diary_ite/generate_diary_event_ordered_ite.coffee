@@ -151,8 +151,9 @@ clipText = (text, maxChars = 280) ->
   return flat unless flat.length > maxChars
   "#{flat.slice(0, maxChars).trim()}..."
 
-renderPriorHistory = (priorSections, maxSections = 3) ->
-  rows = priorSections.slice(-maxSections).map (section) ->
+renderPriorHistory = (priorSections, maxSections = 3, excludeLast = false) ->
+  source = if excludeLast and priorSections.length > 0 then priorSections.slice(0, -1) else priorSections
+  rows = source.slice(-maxSections).map (section) ->
     "#{section.kind}: #{clipText(section.text)}"
   if rows.length then rows.join("\n") else "- none"
 
@@ -166,7 +167,7 @@ renderSceneHints = (kind, event) ->
   if eventBlock? then eventBlock else "- none"
 
 buildEventPrompt = (kind, event, chosenEntries, priorSections, mode) ->
-  historyText = renderPriorHistory priorSections
+  historyText = renderPriorHistory priorSections, 3, true
   eventBlock = describeEvent kind, event
   kagLines = renderKagLines chosenEntries
   previousEnding = if priorSections.length > 0 then lastLineOf(priorSections[priorSections.length - 1].text) else "- none"
@@ -182,19 +183,17 @@ buildEventPrompt = (kind, event, chosenEntries, priorSections, mode) ->
     ""
     "INPUTS:"
     "prior: #{historyText}"
-    "last: #{previousEnding}"
-    "event: #{if eventBlock? then eventBlock else '- none'}"
     "tone: #{toneNotes}"
     "hints: #{sceneHints}"
+    "event: #{if eventBlock? then "This is what happens in this section: " + eventBlock else '- none'}"
     ""
     "The reader loves:"
-    "- continuing from the last moment without restarting the scene"
+    "- continuing with the event from the prior moment without restarting the scene"
     "- an old man remembering imperfectly, with some drift and circling"
     "- the event staying at the center, even when the thought wanders"
     "- concrete things: body, place, sound, light, objects, gestures, speech"
-    "- one small action or one spoken line"
-    "- mild uncertainty: \"I think\", \"maybe\", \"could be wrong\""
-    "- repetition with variation that returns attention to the same thing"
+    "- using tone notes as emotion"
+    "- mild uncertainty: \"possible\", \"maybe\", \"could be wrong\""
     ""
     "The reader dislikes:"
     "- restarting the setup or re-describing the whole scene"
