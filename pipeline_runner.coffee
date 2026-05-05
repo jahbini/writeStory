@@ -1034,10 +1034,12 @@ main = ->
     target = if isPlainObject(spec) then spec.target else null
     unless source?
       if producedBy[artifactKey]?
+        producerStep = producedBy[artifactKey]
+        producerDone = M.theLowdown("done:#{producerStep}")?.value is true
         outEntry = M.theLowdown(artifactKey)
         outVal = outEntry.value
         return outVal if outVal isnt undefined
-        if typeof target is 'string'
+        if producerDone and typeof target is 'string'
           targetEntry = M.theLowdown(target)
           targetVal = targetEntry.value
           return targetVal if targetVal isnt undefined

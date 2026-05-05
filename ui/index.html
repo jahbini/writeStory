@@ -41,6 +41,11 @@
       gap: 16px;
       align-items: start;
     }
+    .column {
+      display: grid;
+      gap: 16px;
+      align-content: start;
+    }
     .panel {
       background: var(--panel);
       border: 1px solid var(--line);
@@ -135,6 +140,23 @@
     .controls {
       display: grid;
       gap: 12px;
+    }
+    .controls-group {
+      display: grid;
+      gap: 12px;
+      padding-top: 12px;
+      border-top: 1px solid var(--line);
+    }
+    .controls-group:first-of-type {
+      padding-top: 0;
+      border-top: 0;
+    }
+    .controls-group h3 {
+      margin: 0;
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
     }
     .controls label {
       display: grid;
@@ -287,120 +309,121 @@
       <div id="run-status" class="status">unknown</div>
     </div>
 
-	    <div class="grid">
-	      <section class="panel">
-	        <h2>Run</h2>
-	        <div id="run-kv" class="kv"></div>
-	      </section>
-
-	      <section class="panel">
-	        <h2>Pipe</h2>
-	        <div class="controls">
-	          <div id="pipe-current" class="mono"></div>
-	          <label>
-	            Switch UI To Pipe
-	            <select id="pipe-select"></select>
-	          </label>
-	          <button id="switch-pipe-button" type="button">Switch Pipe UI</button>
-	          <button id="merge-pipe-button" type="button">Merge Adapter And SQLite From Other Machine</button>
-	          <div id="merge-result" class="hint mono"></div>
-	          <div id="merge-status" class="hint mono"></div>
-	        </div>
-	      </section>
-
-	      <section class="panel">
-	        <h2>Controls</h2>
-	        <div class="controls">
-	          <label>
-	            Pipeline
-	            <select id="pipeline-select"></select>
-	          </label>
-          <div>
-            <div class="hint" style="margin-bottom:6px;">Recipe UI Fields</div>
-            <div id="ui-fields" class="controls"></div>
+    <div class="grid">
+      <div class="column">
+        <section class="panel">
+          <h2>Pipeline Death</h2>
+          <div id="pipeline-death-box" class="death-box hidden">
+            <div id="pipeline-death-text" class="mono"></div>
+            <div class="button-row">
+              <button id="clear-pipeline-state-button" class="danger-button" type="button">Erase pipeline.json</button>
+            </div>
           </div>
-          <label class="checkbox-row">
-            <input id="continuous-checkbox" type="checkbox">
-            <span>Restart after 60 second cooldown until pipeline shutdown</span>
-          </label>
-          <button id="launch-button" type="button">Write Override And Run</button>
-          <button id="kill-button" type="button">Kill Run</button>
-          <div id="launch-result" class="hint mono"></div>
-        </div>
-      </section>
+          <div id="pipeline-death-empty" class="hint mono">no pipeline.json death message</div>
+        </section>
 
-      <section class="panel">
-        <h2>Pipeline Death</h2>
-        <div id="pipeline-death-box" class="death-box hidden">
-          <div id="pipeline-death-text" class="mono"></div>
-          <div class="button-row">
-            <button id="clear-pipeline-state-button" class="danger-button" type="button">Erase pipeline.json</button>
+        <section class="panel">
+          <h2>Outputs</h2>
+          <div id="out-files" class="files"></div>
+          <h2 style="margin-top:16px;">Diary Files</h2>
+          <div id="diary-files" class="files"></div>
+        </section>
+
+        <section class="panel">
+          <h2>Steps</h2>
+          <table class="steps">
+            <thead>
+              <tr><th>Step</th><th>Status</th><th>Updated</th></tr>
+            </thead>
+            <tbody id="steps-body"></tbody>
+          </table>
+        </section>
+
+        <section class="panel">
+          <h2>Latest Err</h2>
+          <pre id="latest-err"></pre>
+        </section>
+
+        <section class="panel">
+          <h2>Latest Log</h2>
+          <pre id="latest-log"></pre>
+        </section>
+      </div>
+
+      <div class="column">
+        <section class="panel">
+          <h2>Controls</h2>
+          <div class="controls">
+            <div class="controls-group">
+              <h3>Pipe</h3>
+              <div id="pipe-current" class="mono"></div>
+              <label>
+                Switch UI To Pipe
+                <select id="pipe-select"></select>
+              </label>
+              <button id="switch-pipe-button" type="button">Switch Pipe UI</button>
+              <button id="merge-pipe-button" type="button">Merge Adapter And SQLite From Other Machine</button>
+              <div id="merge-result" class="hint mono"></div>
+              <div id="merge-status" class="hint mono"></div>
+            </div>
+
+            <div class="controls-group">
+              <h3>Run</h3>
+              <label>
+                Recipe Selector
+                <select id="pipeline-select"></select>
+              </label>
+              <div id="run-kv" class="kv"></div>
+              <label class="checkbox-row">
+                <input id="continuous-checkbox" type="checkbox">
+                <span>Restart after 60 second cooldown until pipeline shutdown</span>
+              </label>
+              <button id="launch-button" type="button">Write Override And Run</button>
+              <button id="kill-button" type="button">Kill Run</button>
+              <div id="launch-result" class="hint mono"></div>
+            </div>
+
+            <div class="controls-group">
+              <h3>Recipe And Overrides</h3>
+              <div>
+                <div class="hint" style="margin-bottom:6px;">Recipe UI Fields</div>
+                <div id="ui-fields" class="controls"></div>
+              </div>
+              <div class="hint" style="margin-bottom:10px;">
+                Recipe is the background. Human override stays separate. UI writes control_override. experiment.yaml is the effective next run.
+              </div>
+              <div class="yaml-grid">
+                <div class="yaml-pane">
+                  <label>
+                    Recipe Background
+                    <textarea id="recipe-viewer" class="yaml-readonly" spellcheck="false" readonly></textarea>
+                  </label>
+                </div>
+                <div class="yaml-pane">
+                  <label>
+                    Human Override
+                    <textarea id="human-override-editor" spellcheck="false"></textarea>
+                  </label>
+                  <div id="human-override-status" class="hint mono"></div>
+                </div>
+                <div class="yaml-pane">
+                  <label>
+                    UI Control Override
+                    <textarea id="control-override-viewer" class="yaml-readonly" spellcheck="false" readonly></textarea>
+                  </label>
+                  <div id="control-override-status" class="hint mono"></div>
+                </div>
+                <div class="yaml-pane">
+                  <label>
+                    Effective experiment.yaml
+                    <textarea id="experiment-viewer" class="yaml-readonly" spellcheck="false" readonly></textarea>
+                  </label>
+                </div>
+              </div>
+            </div>
           </div>
-        </div>
-        <div id="pipeline-death-empty" class="hint mono">no pipeline.json death message</div>
-      </section>
-
-      <section class="panel">
-        <h2>Recipe And Overrides</h2>
-        <div class="hint" style="margin-bottom:10px;">
-          Recipe is the background. Human override stays separate. UI writes control_override. experiment.yaml is the effective next run.
-        </div>
-        <div class="yaml-grid">
-          <div class="yaml-pane">
-            <label>
-              Recipe Background
-              <textarea id="recipe-viewer" class="yaml-readonly" spellcheck="false" readonly></textarea>
-            </label>
-          </div>
-          <div class="yaml-pane">
-            <label>
-              Human Override
-              <textarea id="human-override-editor" spellcheck="false"></textarea>
-            </label>
-            <div id="human-override-status" class="hint mono"></div>
-          </div>
-          <div class="yaml-pane">
-            <label>
-              UI Control Override
-              <textarea id="control-override-viewer" class="yaml-readonly" spellcheck="false" readonly></textarea>
-            </label>
-            <div id="control-override-status" class="hint mono"></div>
-          </div>
-          <div class="yaml-pane">
-            <label>
-              Effective experiment.yaml
-              <textarea id="experiment-viewer" class="yaml-readonly" spellcheck="false" readonly></textarea>
-            </label>
-          </div>
-        </div>
-      </section>
-
-      <section class="panel">
-        <h2>Outputs</h2>
-        <div id="out-files" class="files"></div>
-        <h2 style="margin-top:16px;">Diary Files</h2>
-        <div id="diary-files" class="files"></div>
-      </section>
-
-      <section class="panel">
-        <h2>Steps</h2>
-        <table class="steps">
-          <thead>
-            <tr><th>Step</th><th>Status</th><th>Updated</th></tr>
-          </thead>
-          <tbody id="steps-body"></tbody>
-        </table>
-      </section>
-
-      <section class="panel">
-        <h2>Latest Log</h2>
-        <pre id="latest-log"></pre>
-      </section>
-
-      <section class="panel">
-        <h2>Latest Err</h2>
-        <pre id="latest-err"></pre>
-      </section>
+        </section>
+      </div>
     </div>
   </div>
 
@@ -734,7 +757,7 @@
       statusEl.className = `status ${status}`;
 
       renderKV(byId('run-kv'), [
-        ['pipeline', run.pipeline],
+        ['recipe', run.pipeline],
         ['pipe', pipe.current || ''],
         ['status', run.status],
         ['pid', run.pid],

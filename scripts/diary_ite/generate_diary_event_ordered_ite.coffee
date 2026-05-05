@@ -179,7 +179,7 @@ buildEventPrompt = (kind, event, chosenEntries, priorSections, mode) ->
   kagLines = renderKagLines chosenEntries
   previousEnding = if priorSections.length > 0 then lastLineOf(priorSections[priorSections.length - 1].text) else "- none"
   sceneHints = renderSceneHints kind, event
-  toneNotes = if kagLines.length then kagLines.join("\n") else "- none"
+  emotionNotes = if kagLines.length then kagLines.join("\n") else "- none"
 
   [
     "You are writing in the narrative voice of Jim from St. John's."
@@ -190,7 +190,7 @@ buildEventPrompt = (kind, event, chosenEntries, priorSections, mode) ->
     ""
     "INPUTS:"
     "prior: #{historyText}"
-    "tone: #{toneNotes}"
+    "emotion: #{emotionNotes}"
     "hints: #{sceneHints}"
     "event: #{if eventText.length then eventText else '- none'}"
     ""
@@ -199,14 +199,14 @@ buildEventPrompt = (kind, event, chosenEntries, priorSections, mode) ->
     "- an old man remembering imperfectly, with some drift and circling"
     "- the event staying at the center, even when the thought wanders"
     "- concrete things: body, place, sound, light, objects, gestures, speech"
-    "- using tone notes as emotion"
+    "- using emotion as feeling"
     "- mild uncertainty: \"possible\", \"maybe\", \"could be wrong\""
     ""
     "The reader dislikes:"
     "- restarting the setup or re-describing the whole scene"
     "- exact repeated phrases or sentences"
     "- explaining the inputs"
-    "- using tone notes as action or plot"
+    "- using emotion as action or plot"
     "- jumping to new locations or unrelated situations"
     ""
     "WRITE:"
@@ -214,7 +214,7 @@ buildEventPrompt = (kind, event, chosenEntries, priorSections, mode) ->
     "- stay in one physical place"
     "- use at most one metaphor"
     "- let thoughts drift, but return to the event by the end"
-    "- use tone only to shape the feeling of the event. Keep it separate from the action."
+    "- use emotion only to shape the feeling of the event. Keep it separate from the action."
     "- use hints only if they help, and only lightly"
     ""
     "Return only the diary prose."
