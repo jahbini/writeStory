@@ -15,6 +15,7 @@ repeatLoop =
   payload: null
   timer: null
   next_launch_at: null
+  delay_seconds: 60
 UI_CONTROL_PATH = path.join(CWD, 'state', 'ui-control.json')
 CONTROL_OVERRIDE_PATH = path.join(CWD, 'control_override.yaml')
 OVERRIDE_PATH = path.join(CWD, 'override.yaml')
@@ -183,6 +184,12 @@ writeUiControl = (patch) ->
   writeText UI_CONTROL_PATH, JSON.stringify(next, null, 2)
   next
 
+normalizeCooldownSeconds = (value, fallback = 60) ->
+  num = Number(value)
+  return 20 if num is 20
+  return 60 if num is 60
+  fallback
+
 dumpYaml = (value) ->
   yaml.dump value,
     lineWidth: 120
@@ -318,6 +325,19 @@ scanUiFields = (recipe, override, uiControl) ->
           value: chosenValue
           source_path: sourcePath
           options: loadDropdownOptions(sourcePath)
+      else if directive is 'UI_textarea'
+        defaultValue = if node.length >= 2 then String(node[1] ? '') else ''
+        chosenValue = if Object::hasOwnProperty.call(pendingUi, prefix)
+          String(pendingUi[prefix] ? '')
+        else
+          overrideValue = getByPath override, prefix
+          if typeof overrideValue is 'string' then overrideValue else defaultValue
+        rows.push
+          path: prefix
+          label: buildLabel(prefix)
+          type: 'textarea'
+          default_value: defaultValue
+          value: chosenValue
       return
 
     return unless not Array.isArray(node)
@@ -483,12 +503,14 @@ buildControls = ->
     reflection: pending.reflection ? controlStoryStep.reflection ? recipeStoryStep.reflection ? ''
     realization: pending.realization ? controlStoryStep.realization ? recipeStoryStep.realization ? ''
     continuous: uiControl.continuous is true
+    continuous_delay_seconds: normalizeCooldownSeconds(uiControl.continuous_delay_seconds, 60)
     pipelines: [
       'base_ite'
       'oracle_ite'
       'lora_ite'
       'diary_ite'
       'diary_translate_ite'
+      'prompt_ite'
       'story_scan'
       'lora_scan'
     ]
@@ -527,7 +549,7 @@ collectExpectedOutputs = (run) ->
   override = readOverride()
   controlOverride = readControlOverride()
   pipeline = controlOverride.pipeline ? override.pipeline ? run?.pipeline ? null
-  return { out_files: [], diary_files: [] } unless pipeline?
+  return { out_files: [], diary_files: collectDiaryFiles(run) } unless pipeline?
 
   configPath = path.join(EXEC_ROOT, 'config', "#{pipeline}.yaml")
   recipe = readYaml(configPath)
@@ -535,7 +557,6 @@ collectExpectedOutputs = (run) ->
   runStart = run?.started_at ? null
 
   outFiles = []
-  diaryFiles = []
   seen = new Set()
 
   for own artifactKey, spec of artifacts
@@ -544,25 +565,27 @@ collectExpectedOutputs = (run) ->
     continue if seen.has(target)
     seen.add target
     row = describeOutputFile target, runStart
-    if /^diary\//.test(target)
-      diaryFiles.push row
-    else
-      outFiles.push row
-
-  if pipeline in ['diary_ite', 'diary_translate_ite'] and run?.hh_mm?
-    diaryBase = "diary/diary_#{run.hh_mm}.txt"
-    diaryAdapter = "diary/diary_#{run.hh_mm}.adapter.txt"
-    for target in [diaryBase, diaryAdapter] when not seen.has(target)
-      seen.add target
-      diaryFiles.push describeOutputFile target, runStart
+    continue if /^diary\//.test(target)
+    outFiles.push row
 
   outFiles.sort (a, b) -> String(a.path).localeCompare String(b.path)
-  diaryFiles.sort (a, b) -> String(a.path).localeCompare String(b.path)
 
   {
     out_files: outFiles
-    diary_files: diaryFiles
+    diary_files: collectDiaryFiles(run)
   }
+
+collectDiaryFiles = (run) ->
+  diaryDir = path.join(CWD, 'diary')
+  runStart = run?.started_at ? null
+  rows = []
+  return rows unless fs.existsSync(diaryDir)
+
+  for entry in listFiles(diaryDir) when entry? and entry.is_dir isnt true
+    rows.push describeOutputFile "diary/#{entry.name}", runStart
+
+  rows.sort (a, b) -> String(a.path).localeCompare String(b.path)
+  rows
 
 buildStatus = ->
   run = normalizeUiRun readJson path.join(CWD, 'state', 'ui-run.json'), {}
@@ -715,6 +738,7 @@ stopRepeatLoop = ->
   repeatLoop.payload = null
   repeatLoop.timer = null
   repeatLoop.next_launch_at = null
+  repeatLoop.delay_seconds = 60
   writeUiControl continuous: false
 
 buildLaunchPayloadFromControl = ->
@@ -723,6 +747,7 @@ buildLaunchPayloadFromControl = ->
   payload =
     pipeline: pending.pipeline ? readOverride().pipeline ? ''
     continuous: uiControl.continuous is true
+    continuous_delay_seconds: normalizeCooldownSeconds(uiControl.continuous_delay_seconds, 60)
 
   for key in ['scene', 'arrival', 'disturbance', 'reflection', 'realization']
     payload[key] = pending[key] if pending[key]?
@@ -806,12 +831,13 @@ scheduleRepeatLaunch = ->
       next_launch_at: null
     return
 
-  delayMs = 60 * 1000
+  delaySeconds = normalizeCooldownSeconds(repeatLoop.delay_seconds, 60)
+  delayMs = delaySeconds * 1000
   repeatLoop.next_launch_at = new Date(Date.now() + delayMs).toISOString()
   writeUiRunPatch
     status: 'cooldown'
     loop_enabled: true
-    countdown_seconds: 60
+    countdown_seconds: delaySeconds
     next_launch_at: repeatLoop.next_launch_at
 
   repeatLoop.timer = setTimeout ->
@@ -978,7 +1004,10 @@ handleLaunch = (req, res) ->
   if payload.continuous is true
     repeatLoop.enabled = true
     repeatLoop.payload = Object.assign {}, payload
-    writeUiControl continuous: true
+    repeatLoop.delay_seconds = normalizeCooldownSeconds(payload.continuous_delay_seconds, 60)
+    writeUiControl
+      continuous: true
+      continuous_delay_seconds: repeatLoop.delay_seconds
   else
     stopRepeatLoop()
   overrideText = if typeof payload.control_override_text is 'string' and payload.control_override_text.trim().length
@@ -1071,6 +1100,7 @@ handleControl = (req, res) ->
   current = readUiControl()
   next =
     continuous: if payload.continuous is true then true else false
+    continuous_delay_seconds: normalizeCooldownSeconds(payload.continuous_delay_seconds, normalizeCooldownSeconds(current?.continuous_delay_seconds, 60))
     pending:
       pipeline: if pipeline.length then pipeline else (current?.pending?.pipeline ? readOverride().pipeline ? '')
       scene: String(payload.scene ? '')
@@ -1098,6 +1128,7 @@ handleControl = (req, res) ->
   controlOverride = writeControlOverrideText next.control_override_text
   if next.continuous is true
     repeatLoop.enabled = true
+    repeatLoop.delay_seconds = next.continuous_delay_seconds
   else
     stopRepeatLoop()
     writeUiRunPatch

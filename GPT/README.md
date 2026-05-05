@@ -20,6 +20,11 @@ Current repository assumptions worth preserving:
 - `control_override.yaml` is UI-owned run control, not a replacement for `override.yaml`
 - new empty pipes infer their model identity from the pipe directory name
 - `base_ite` now owns base preparation through quantization, so downstream inference recipes consume prepared artifacts instead of rebuilding them
+- the UI drives recipe fields through recipe-declared directives, currently `UI_dropdown`, `UI_checkbox`, and `UI_textarea`
+- the UI layout is intentionally split into:
+  - left column for death/output/step/log visibility
+  - right column for one merged controls pane
+- the UI should not poll every 2 seconds all the time; it now polls continuously only while a pipeline is active or cooling down
 
 Suggested use:
 - when a step fails, inspect its memory file first

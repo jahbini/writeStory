@@ -376,7 +376,14 @@
               <div id="run-kv" class="kv"></div>
               <label class="checkbox-row">
                 <input id="continuous-checkbox" type="checkbox">
-                <span>Restart after 60 second cooldown until pipeline shutdown</span>
+                <span>Restart after cooldown until pipeline shutdown</span>
+              </label>
+              <label>
+                Cooldown Seconds
+                <select id="continuous-delay-select">
+                  <option value="60">60</option>
+                  <option value="20">20</option>
+                </select>
               </label>
               <button id="launch-button" type="button">Write Override And Run</button>
               <button id="kill-button" type="button">Kill Run</button>
@@ -475,8 +482,10 @@
       if (active === byId('human-override-editor')) return true;
       if (active === byId('pipeline-select')) return true;
       if (active === byId('continuous-checkbox')) return true;
+      if (active === byId('continuous-delay-select')) return true;
       if (active.classList?.contains('ui-dropdown')) return true;
       if (active.classList?.contains('ui-checkbox')) return true;
+      if (active.classList?.contains('ui-textarea')) return true;
       return false;
     }
 
@@ -555,6 +564,14 @@
               <select class="ui-dropdown" data-path="${field.path}" data-current-value="${field.value || ''}">
                 ${base.concat(options).join('')}
               </select>
+            </label>
+          `;
+        }
+        if (field.type === 'textarea') {
+          return `
+            <label>
+              ${field.label}
+              <textarea class="ui-textarea" data-path="${field.path}">${field.value || ''}</textarea>
             </label>
           `;
         }
@@ -656,6 +673,11 @@
         if (!path) return;
         rows[path] = node.value;
       });
+      document.querySelectorAll('.ui-textarea').forEach((node) => {
+        const path = node.getAttribute('data-path');
+        if (!path) return;
+        rows[path] = node.value;
+      });
       return rows;
     }
 
@@ -727,8 +749,10 @@
 
     function renderContinuous(controls) {
       const box = byId('continuous-checkbox');
+      const delaySelect = byId('continuous-delay-select');
       if (controlsDirty) return;
       box.checked = controls?.continuous === true;
+      delaySelect.value = String(controls?.continuous_delay_seconds === 20 ? 20 : 60);
     }
 
     async function refresh() {
@@ -850,7 +874,8 @@
         const payload = {
           pipeline: byId('pipeline-select').value,
           ui_values: collectUiValues(),
-          continuous: byId('continuous-checkbox').checked
+          continuous: byId('continuous-checkbox').checked,
+          continuous_delay_seconds: Number(byId('continuous-delay-select').value || 60)
         };
         const res = await fetch('/api/launch', {
           method: 'POST',
@@ -877,7 +902,8 @@
       const payload = {
         pipeline: byId('pipeline-select').value,
         ui_values: collectUiValues(),
-        continuous: byId('continuous-checkbox').checked
+        continuous: byId('continuous-checkbox').checked,
+        continuous_delay_seconds: Number(byId('continuous-delay-select').value || 60)
       };
 
       const res = await fetch('/api/control', {
@@ -910,7 +936,8 @@
         ui_values: {
           [path]: value
         },
-        continuous: byId('continuous-checkbox').checked
+        continuous: byId('continuous-checkbox').checked,
+        continuous_delay_seconds: Number(byId('continuous-delay-select').value || 60)
       };
 
       const res = await fetch('/api/control', {
@@ -1085,6 +1112,12 @@
         byId('control-override-status').textContent = String(err.message || err);
       });
     });
+    byId('continuous-delay-select').addEventListener('change', () => {
+      controlsDirty = true;
+      saveControlState().catch((err) => {
+        byId('control-override-status').textContent = String(err.message || err);
+      });
+    });
     document.addEventListener('change', (event) => {
       if (!event.target.classList.contains('ui-checkbox') && !event.target.classList.contains('ui-dropdown')) return;
       controlsDirty = true;
@@ -1092,6 +1125,12 @@
       saveSingleUiField(event.target).catch((err) => {
         byId('control-override-status').textContent = String(err.message || err);
       });
+    });
+    document.addEventListener('input', (event) => {
+      if (!event.target.classList.contains('ui-textarea')) return;
+      controlsDirty = true;
+      byId('control-override-status').textContent = 'editing control override from recipe UI fields...';
+      scheduleControlSave();
     });
     byId('human-override-editor').addEventListener('input', () => {
       humanOverrideDirty = true;

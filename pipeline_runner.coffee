@@ -167,6 +167,8 @@ stripUiDirectives = (node) ->
       return node[1] is true
     if directive is 'UI_dropdown'
       return if node.length >= 3 then node[2] else ''
+    if directive is 'UI_textarea'
+      return if node.length >= 2 then String(node[1] ? '') else ''
     return node.map (item) -> stripUiDirectives(item)
   if isPlainObject(node)
     out = {}
