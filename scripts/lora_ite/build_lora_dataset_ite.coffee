@@ -185,6 +185,19 @@ buildFragmentParagraphs = (paragraphs) ->
     console.log "[build_lora_dataset_ite] stories processed:", storiesProcessed
     console.log "[build_lora_dataset_ite] rows written:", rowsWritten
 
+    if rows.length is 0
+      shutdownAt = new Date().toISOString()
+      console.log "[build_lora_dataset_ite] selected stories produced no trainable rows; shutting down pipeline cleanly"
+      L.saveThis 'pipeline:shutdown',
+        by: L.stepName
+        reason: 'selected stories produced no LoRA training rows'
+        timestamp: shutdownAt
+      L.make 'train_rows', []
+      L.make 'valid_rows', []
+      L.make 'test_rows', []
+      L.done()
+      return
+
     L.make 'train_rows', rows
     L.make 'valid_rows', rows
     L.make 'test_rows', rows
