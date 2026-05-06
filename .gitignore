@@ -4,6 +4,15 @@
 *.tar
 *.tgz
 
+rusty/**/target/
+rusty/**/build/
+rusty/**/out/
+rusty/**/debug/
+rusty/**/release/
+rusty/**/tmp/
+rusty/**/logs/
+rusty/**/mlx_smoke
+
 node_modules/
 pipes/
 pnpm-lock.yaml

@@ -25,6 +25,10 @@ Current repository assumptions worth preserving:
   - left column for death/output/step/log visibility
   - right column for one merged controls pane
 - the UI should not poll every 2 seconds all the time; it now polls continuously only while a pipeline is active or cooling down
+- the `rusty/` branch introduces a future resident Rust ML bridge:
+  - JS/CoffeeScript continues to own orchestration, DAGs, Memo, YAML, SQLite, and UI
+  - Rust will own ML lifetime, tensors, KV cache, Metal/unified-memory pressure, and model residency
+  - JS may only hold opaque handles for ML-side objects
 
 Suggested use:
 - when a step fails, inspect its memory file first

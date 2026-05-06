@@ -1,0 +1,43 @@
+run:
+  model: Qwen/Qwen3-4B-Instruct-2507
+
+artifacts:
+  rusty_health:
+    target: mlx/bridge_health.json
+  rusty_model:
+    target: mlx/load_model.json
+  rusty_session:
+    target: mlx/create_session.json
+  rusty_generation:
+    target: mlx/generate.json
+
+# This file is intentionally illustrative rather than runnable.
+# It shows the shape of future ML-visible DAG artifacts once the resident bridge
+# is wired into the normal pipeline steps.
+#
+# JavaScript still sees only opaque handles and structured responses.
+
+illustrative_requests:
+  bridge_health:
+    artifact: rusty_health
+    cmd: bridge_health
+    args: {}
+
+  load_model:
+    artifact: rusty_model
+    cmd: load_model
+    args:
+      path: build/model4
+
+  create_session:
+    artifact: rusty_session
+    cmd: create_session
+    args:
+      model: model:1
+
+  generate:
+    artifact: rusty_generation
+    cmd: generate
+    args:
+      session: sess:1
+      prompt: hello
