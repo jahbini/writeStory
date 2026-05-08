@@ -15,6 +15,12 @@ artifacts:
     target: out/prompt_generate_meta.json
   prompt_generate_text:
     target: out/prompt_generate.txt
+  prompt_rusty_raw:
+    target: out/prompt_rusty_raw.json
+  prompt_rusty_meta:
+    target: out/prompt_rusty_meta.json
+  prompt_rusty_text:
+    target: out/prompt_rusty.txt
 
 generate_prompt_ite:
   run: prompt_ite/generate_prompt_ite.coffee
@@ -27,3 +33,19 @@ generate_prompt_ite:
   mlx:
     max-tokens: 1600
     temp: 0.7
+
+generate_prompt_rusty_ite:
+  run: prompt_ite/generate_prompt_rusty_ite.coffee
+  depends_on: [never]
+  needs: []
+  makes: [prompt_rusty_raw, prompt_rusty_meta, prompt_rusty_text]
+  quantized_model_dir: build/model4
+  output_file_prefix: prompt_rusty
+  chat: true
+  system_prompt:
+  mlx:
+    max-tokens: 256
+    temp: 0.7
+    top-k: 40
+    top-p: 1.0
+    seed: 1234

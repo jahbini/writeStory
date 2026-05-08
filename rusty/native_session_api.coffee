@@ -101,12 +101,14 @@ class RustyNativeSessionApi
       text: text
     value.tokens
 
-  decodeTokens: (target, tokenIds) ->
+  decodeTokens: (target, tokenIds, opts = {}) ->
     tokenizer = @tokenizerFor target
     value = await @value 'tokenizer_decode',
       tokenizer: tokenizer
       tokens: tokenIds
-    value.text
+      skip_special_tokens: opts.skipSpecialTokens ? opts.skip_special_tokens ? false
+      diagnostics: opts.diagnostics ? false
+    if opts.returnFull ? false then value else value.text
 
   warmSession: (session) ->
     await @value 'warm_resident_session', session: session

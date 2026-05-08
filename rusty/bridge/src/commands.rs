@@ -390,17 +390,116 @@ fn tokenizer_encode_qwen_like(record: &TokenizerRecord, text: &str) -> Result<Ve
 }
 
 fn tokenizer_decode_fixture(record: &TokenizerRecord, tokens: &[u64]) -> Result<String, String> {
+    tokenizer_decode_fixture_with_options(record, tokens, false).map(|decoded| decoded.text)
+}
+
+#[derive(Debug, Clone)]
+struct TokenDecodeDiagnostic {
+    token_id: u64,
+    raw_token: String,
+    byte_values: Vec<u8>,
+    decoded_piece: String,
+    special: bool,
+    skipped: bool,
+}
+
+#[derive(Debug, Clone)]
+struct TokenDecodeOutput {
+    text: String,
+    diagnostics: Vec<TokenDecodeDiagnostic>,
+}
+
+fn qwen_byte_decoder() -> std::collections::HashMap<char, u8> {
+    let mut bytes: Vec<u16> = (b'!' as u16..=b'~' as u16).collect();
+    bytes.extend(0xA1u16..=0xACu16);
+    bytes.extend(0xAEu16..=0xFFu16);
+    let mut chars = bytes.clone();
+    let mut n = 0u16;
+    for byte in 0u16..=255u16 {
+        if !bytes.contains(&byte) {
+            bytes.push(byte);
+            chars.push(256 + n);
+            n += 1;
+        }
+    }
+    let mut decoder = std::collections::HashMap::new();
+    for (byte, ch) in bytes.into_iter().zip(chars.into_iter()) {
+        if let Some(ch) = char::from_u32(ch as u32) {
+            decoder.insert(ch, byte as u8);
+        }
+    }
+    decoder
+}
+
+fn decode_qwen_token_piece(piece: &str, byte_decoder: &std::collections::HashMap<char, u8>) -> (String, Vec<u8>) {
+    let mut bytes = Vec::new();
+    let mut used_byte_decoder = false;
+    for ch in piece.chars() {
+        if let Some(byte) = byte_decoder.get(&ch) {
+            bytes.push(*byte);
+            used_byte_decoder = true;
+        } else {
+            let mut buf = [0u8; 4];
+            bytes.extend_from_slice(ch.encode_utf8(&mut buf).as_bytes());
+        }
+    }
+    if used_byte_decoder {
+        (String::from_utf8_lossy(&bytes).into_owned(), bytes)
+    } else {
+        (
+            piece.replace('Ċ', "\n").replace('Ġ', " ").replace('ĉ', "\t"),
+            bytes,
+        )
+    }
+}
+
+fn tokenizer_decode_fixture_with_options(
+    record: &TokenizerRecord,
+    tokens: &[u64],
+    skip_special_tokens: bool,
+) -> Result<TokenDecodeOutput, String> {
     let inverse = tokenizer_inverse_vocab(&record.vocab);
     let qwen_like = record.vocab.contains_key("Ċ") || record.vocab.contains_key("Ġ");
-    let mut text = String::new();
+    let mut qwen_bytes = Vec::new();
     let mut pieces = Vec::new();
+    let byte_decoder = qwen_byte_decoder();
+    let mut diagnostics = Vec::new();
     for token in tokens {
         match inverse.get(token) {
             Some(piece) => {
+                let special = piece.starts_with("<|") && piece.ends_with("|>");
+                if skip_special_tokens && special {
+                    diagnostics.push(TokenDecodeDiagnostic {
+                        token_id: *token,
+                        raw_token: piece.clone(),
+                        byte_values: Vec::new(),
+                        decoded_piece: String::new(),
+                        special,
+                        skipped: true,
+                    });
+                    continue;
+                }
                 if qwen_like {
-                    text.push_str(&piece.replace('Ċ', "\n").replace('Ġ', " ").replace('ĉ', "\t"));
+                    let (decoded_piece, byte_values) = decode_qwen_token_piece(piece, &byte_decoder);
+                    qwen_bytes.extend_from_slice(&byte_values);
+                    diagnostics.push(TokenDecodeDiagnostic {
+                        token_id: *token,
+                        raw_token: piece.clone(),
+                        byte_values,
+                        decoded_piece,
+                        special,
+                        skipped: false,
+                    });
                 } else {
                     pieces.push(piece.clone());
+                    diagnostics.push(TokenDecodeDiagnostic {
+                        token_id: *token,
+                        raw_token: piece.clone(),
+                        byte_values: piece.as_bytes().to_vec(),
+                        decoded_piece: piece.clone(),
+                        special,
+                        skipped: false,
+                    });
                 }
             }
             None => {
@@ -411,9 +510,15 @@ fn tokenizer_decode_fixture(record: &TokenizerRecord, tokens: &[u64]) -> Result<
         }
     }
     if qwen_like {
-        return Ok(text);
+        return Ok(TokenDecodeOutput {
+            text: String::from_utf8_lossy(&qwen_bytes).into_owned(),
+            diagnostics,
+        });
     }
-    Ok(pieces.join(" "))
+    Ok(TokenDecodeOutput {
+        text: pieces.join(" "),
+        diagnostics,
+    })
 }
 
 fn cached_greedy_next_token_probe(
@@ -4164,18 +4269,44 @@ pub fn dispatch(state: &mut BridgeState, request: Request) -> Response {
                 };
                 parsed.push(id);
             }
-            let decoded = match tokenizer_decode_fixture(record, &parsed) {
-                Ok(text) => text,
+            let skip_special_tokens = request
+                .args
+                .get("skip_special_tokens")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false);
+            let include_diagnostics = request
+                .args
+                .get("diagnostics")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false);
+            let decoded = match tokenizer_decode_fixture_with_options(record, &parsed, skip_special_tokens) {
+                Ok(output) => output,
                 Err(message) => {
                     return Response::err(request.id.clone(), "tokenizer_unknown_token", message);
                 }
             };
+            let diagnostics = decoded
+                .diagnostics
+                .iter()
+                .map(|entry| {
+                    json!({
+                        "token_id": entry.token_id,
+                        "raw_token": entry.raw_token,
+                        "byte_values": entry.byte_values,
+                        "byte_decoded_form": entry.decoded_piece,
+                        "special": entry.special,
+                        "skipped": entry.skipped,
+                    })
+                })
+                .collect::<Vec<Value>>();
 
             Response::ok(
                 request.id,
                 json!({
                     "tokenizer": handle,
-                    "text": decoded,
+                    "text": decoded.text,
+                    "skip_special_tokens": skip_special_tokens,
+                    "diagnostics": if include_diagnostics { json!(diagnostics) } else { Value::Null },
                     "fixture_only": true
                 }),
             )

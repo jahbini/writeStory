@@ -121,10 +121,21 @@ main = ->
       stopOnEos: eosTokenId?
       eosTokenId: eosTokenId ? 0
       stopTokenIds: stopTokenIds
-    decodedGeneratedText = try
-      await api.decodeTokens session, generation.generated_token_ids
+    rawDecodedGeneratedText = try
+      await api.decodeTokens session, generation.generated_token_ids,
+        skipSpecialTokens: false
+        diagnostics: false
     catch _err
       generation.decoded_generated_text
+    cleanedDecoded = try
+      await api.decodeTokens session, generation.generated_token_ids,
+        skipSpecialTokens: true
+        diagnostics: true
+        returnFull: true
+    catch _err
+      text: rawDecodedGeneratedText
+      diagnostics: []
+    decodedGeneratedText = cleanedDecoded.text
     decodedFormattedPrompt = try
       await api.decodeTokens session, promptTokenIds
     catch _err
@@ -196,9 +207,20 @@ main = ->
       warmup_ms: warm1.warmup_ms
       warmup_reused: warm1.reused
       generated_token_ids: generation.generated_token_ids
+      raw_decoded_text: rawDecodedGeneratedText
+      cleaned_decoded_text: decodedGeneratedText
       decoded_generated_text: decodedGeneratedText
+      decode_diagnostics_tail: (cleanedDecoded.diagnostics ? []).slice -16
       generation_timing_ms: generation.generation_1_total_ms ? generation.total_generation_ms
       per_token_incremental_ms: generation.per_token_incremental_ms
+      attention_backend_default: generation.attention_backend_default
+      attention_backend_active: generation.attention_backend_active
+      expanded_kv_cache: generation.expanded_kv_cache
+      experimental_mlx_attention_enabled: generation.experimental_mlx_attention_enabled
+      experimental_mlx_attention_mode: generation.experimental_mlx_attention_mode
+      long_decode_diagnostic_snapshots: generation.long_decode_diagnostic_snapshots
+      last_token_backend_report: generation.last_token_backend_report
+      last_token_attention_backends_per_layer: generation.last_token_attention_backends_per_layer
       stopped: generation.stopped
       stop_reason: generation.stop_reason
       stop_token_id: generation.stop_token_id

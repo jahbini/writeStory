@@ -31,6 +31,7 @@
 #include "mlx/array.h"
 #include "mlx/device.h"
 #include "mlx/dtype_utils.h"
+#include "mlx/fast.h"
 #include "mlx/ops.h"
 #include "mlx/stream.h"
 #include "mlx/transforms.h"
@@ -165,12 +166,18 @@ RopeRuntimeConfig& active_rope_config() {
 struct NativeLayerKvCache {
   std::vector<std::vector<float>> keys;
   std::vector<std::vector<float>> values;
+#if defined(RUSTY_MLX_HAVE_NATIVE_LINK)
+  std::optional<mlx::core::array> expanded_keys;
+  std::optional<mlx::core::array> expanded_values;
+  std::size_t expanded_current_len = 0;
+#endif
 };
 
 struct NativeSessionKvCache {
   std::string owner_session;
   std::uint64_t layers_allocated = 0;
   std::uint64_t positions_stored = 0;
+  std::uint64_t max_seq = 0;
   std::vector<NativeLayerKvCache> layers;
 };
 
@@ -258,6 +265,13 @@ struct ResidentDecodeResult {
   double down_projection_ms = 0.0;
   double final_norm_ms = 0.0;
   double logits_projection_ms = 0.0;
+  double kv_append_ms = 0.0;
+  double attention_score_ms = 0.0;
+  double attention_softmax_ms = 0.0;
+  double attention_value_mix_ms = 0.0;
+  std::vector<double> per_layer_attention_ms;
+  std::vector<std::string> per_layer_attention_backends;
+  std::vector<std::string> per_layer_attention_fallback_reasons;
   std::string gate_backend = "cpu";
   std::string up_backend = "cpu";
   std::string activation_backend = "cpu";
@@ -271,6 +285,31 @@ struct ResidentDecodeResult {
   std::uint64_t positions_before = 0;
   std::uint64_t positions_after = 0;
 };
+
+struct DecodeTimingSnapshot {
+  std::uint64_t token_position = 0;
+  std::uint64_t sequence_length_at_token = 0;
+  std::uint64_t kv_layers_allocated = 0;
+  std::uint64_t kv_positions_stored = 0;
+  std::size_t k_length = 0;
+  std::size_t v_length = 0;
+  ResidentDecodeResult result;
+  std::vector<std::string> fallback_steps;
+  std::vector<std::string> readback_reasons;
+};
+
+struct CachedAttentionTiming {
+  double kv_append_ms = 0.0;
+  double score_ms = 0.0;
+  double softmax_ms = 0.0;
+  double value_mix_ms = 0.0;
+
+  double total_attention_ms() const {
+    return kv_append_ms + score_ms + softmax_ms + value_mix_ms;
+  }
+};
+
+std::string json_escape(const std::string& value);
 
 void add_elapsed_ms(double& bucket, std::chrono::steady_clock::time_point start) {
   auto end = std::chrono::steady_clock::now();
@@ -286,6 +325,8 @@ void update_largest_arithmetic_bucket(ResidentDecodeResult& result) {
       {"down_projection", result.down_projection_ms},
       {"final_norm", result.final_norm_ms},
       {"logits_projection_top1", result.logits_projection_ms},
+      {"attention_cpu_total", result.kv_append_ms + result.attention_score_ms +
+          result.attention_softmax_ms + result.attention_value_mix_ms},
   };
   result.largest_arithmetic_bucket = buckets[0].first;
   result.largest_arithmetic_bucket_ms = buckets[0].second;
@@ -309,8 +350,70 @@ std::string resident_decode_timing_buckets_json(const ResidentDecodeResult& resu
       << "\"gate_up_activation\":" << result.gate_up_activation_ms << ","
       << "\"down_projection\":" << result.down_projection_ms << ","
       << "\"final_norm\":" << result.final_norm_ms << ","
-      << "\"logits_projection_top1\":" << result.logits_projection_ms
+      << "\"logits_projection_top1\":" << result.logits_projection_ms << ","
+      << "\"kv_append\":" << result.kv_append_ms << ","
+      << "\"attention_score_computation\":" << result.attention_score_ms << ","
+      << "\"softmax\":" << result.attention_softmax_ms << ","
+      << "\"attention_value_mix\":" << result.attention_value_mix_ms << ","
+      << "\"total_attention_cpu\":" << (result.kv_append_ms + result.attention_score_ms +
+          result.attention_softmax_ms + result.attention_value_mix_ms)
       << "}";
+  return out.str();
+}
+
+std::string attention_layer_timing_summary_json(const ResidentDecodeResult& result) {
+  if (result.per_layer_attention_ms.empty()) {
+    return "{\"available\":false,\"min_ms\":0,\"avg_ms\":0,\"max_ms\":0,\"slowest_layer\":0,\"slowest_layer_ms\":0,\"sequence_length\":0}";
+  }
+  double min_ms = result.per_layer_attention_ms[0];
+  double max_ms = result.per_layer_attention_ms[0];
+  double sum_ms = 0.0;
+  std::size_t slowest_layer = 0;
+  for (std::size_t i = 0; i < result.per_layer_attention_ms.size(); ++i) {
+    const double value = result.per_layer_attention_ms[i];
+    min_ms = std::min(min_ms, value);
+    if (value > max_ms) {
+      max_ms = value;
+      slowest_layer = i;
+    }
+    sum_ms += value;
+  }
+  std::ostringstream out;
+  out << "{"
+      << "\"available\":true,"
+      << "\"min_ms\":" << min_ms << ","
+      << "\"avg_ms\":" << (sum_ms / static_cast<double>(result.per_layer_attention_ms.size())) << ","
+      << "\"max_ms\":" << max_ms << ","
+      << "\"slowest_layer\":" << slowest_layer << ","
+      << "\"slowest_layer_ms\":" << max_ms << ","
+      << "\"sequence_length\":" << result.positions_after
+      << "}";
+  return out.str();
+}
+
+std::string attention_backends_json(const ResidentDecodeResult& result) {
+  std::ostringstream out;
+  out << "[";
+  for (std::size_t i = 0; i < result.per_layer_attention_backends.size(); ++i) {
+    if (i > 0) {
+      out << ",";
+    }
+    out << "{"
+        << "\"layer\":" << i << ","
+        << "\"backend\":\"" << json_escape(result.per_layer_attention_backends[i]) << "\","
+        << "\"timing_ms\":";
+    if (i < result.per_layer_attention_ms.size()) {
+      out << result.per_layer_attention_ms[i];
+    } else {
+      out << 0;
+    }
+    out << ",\"fallback_reason\":\"";
+    if (i < result.per_layer_attention_fallback_reasons.size()) {
+      out << json_escape(result.per_layer_attention_fallback_reasons[i]);
+    }
+    out << "\"}";
+  }
+  out << "]";
   return out.str();
 }
 
@@ -341,7 +444,6 @@ std::string projection_timing_breakdown_json(const ResidentDecodeResult& result)
   return out.str();
 }
 
-std::string json_escape(const std::string& value);
 extern thread_local std::vector<std::string> mlx_quantized_linear_fallback_steps;
 
 std::string fallback_steps_json() {
@@ -407,13 +509,127 @@ std::string backend_report_json(
   out << "{"
       << "\"embedding\":" << backend_step_json("cpu", false, 0.0) << ","
       << "\"qkv\":" << backend_step_json(metal_or_cpu("qkv"), fell_back("qkv"), result.qkv_projection_ms) << ","
-      << "\"attention\":" << backend_step_json("cpu", false, 0.0) << ","
+      << "\"attention\":" << backend_step_json(
+             (!result.per_layer_attention_backends.empty() &&
+              std::all_of(
+                  result.per_layer_attention_backends.begin(),
+                  result.per_layer_attention_backends.end(),
+                  [](const std::string& backend) {
+                    return backend == "mlx" || backend == "mlx_batched" ||
+                           backend == "mlx_expanded_kv";
+                  }))
+                 ? result.per_layer_attention_backends.front().c_str()
+                 : "cpu",
+             std::any_of(
+                 result.per_layer_attention_fallback_reasons.begin(),
+                 result.per_layer_attention_fallback_reasons.end(),
+                 [](const std::string& reason) { return !reason.empty(); }),
+             result.kv_append_ms + result.attention_score_ms + result.attention_softmax_ms +
+                 result.attention_value_mix_ms) << ","
       << "\"o_proj\":" << backend_step_json(metal_or_cpu("o_proj"), fell_back("o_proj"), result.o_projection_ms) << ","
       << "\"post_attn_norm\":" << backend_step_json("cpu", false, 0.0) << ","
       << "\"gate_up\":" << gate_up_backend_step_json(result) << ","
       << "\"down\":" << backend_step_json(metal_or_cpu("down"), fell_back("down"), result.down_projection_ms) << ","
       << "\"final_norm\":" << backend_step_json("cpu", false, result.final_norm_ms, result.final_norm_checksum) << ","
       << "\"logits/top1\":" << backend_step_json(metal_or_cpu("logits/top1"), fell_back("logits/top1"), result.logits_projection_ms)
+      << "}";
+  return out.str();
+}
+
+std::string decode_timing_snapshot_json(
+    const DecodeTimingSnapshot& snapshot,
+    bool metal_available) {
+  auto fell_back = [&](const char* step) {
+    return std::find(
+        snapshot.fallback_steps.begin(),
+        snapshot.fallback_steps.end(),
+        step) != snapshot.fallback_steps.end();
+  };
+  auto metal_or_cpu = [&](const char* step) {
+    return (metal_available && !fell_back(step)) ? "metal" : "cpu";
+  };
+  auto bucket = [](double timing_ms, const char* backend) {
+    std::ostringstream out;
+    out << "{"
+        << "\"timing_ms\":" << timing_ms << ","
+        << "\"backend\":\"" << backend << "\""
+        << "}";
+    return out.str();
+  };
+  auto string_array = [](const std::vector<std::string>& values) {
+    std::ostringstream out;
+    out << "[";
+    for (std::size_t i = 0; i < values.size(); ++i) {
+      if (i > 0) {
+        out << ",";
+      }
+      out << "\"" << json_escape(values[i]) << "\"";
+    }
+    out << "]";
+    return out.str();
+  };
+
+  const ResidentDecodeResult& r = snapshot.result;
+  std::ostringstream out;
+  out << "{"
+      << "\"token_position\":" << snapshot.token_position << ","
+      << "\"sequence_length_at_token\":" << snapshot.sequence_length_at_token << ","
+      << "\"total_timing_ms\":" << r.timing_ms << ","
+      << "\"buckets\":{"
+      << "\"q_norm/k_norm\":" << bucket(0.0, "mixed") << ","
+      << "\"qkv_projection\":" << bucket(r.qkv_projection_ms, metal_or_cpu("qkv")) << ","
+      << "\"RoPE\":" << bucket(0.0, "cpu") << ","
+      << "\"KV_append\":" << bucket(
+             r.kv_append_ms,
+             (!r.per_layer_attention_backends.empty() &&
+              r.per_layer_attention_backends.front() == "mlx_expanded_kv") ? "mixed" : "cpu") << ","
+      << "\"attention_score_computation\":" << bucket(
+             r.attention_score_ms,
+             (!r.per_layer_attention_backends.empty() &&
+              r.per_layer_attention_backends.front() == "mlx_expanded_kv") ? "metal" : "cpu") << ","
+      << "\"softmax\":" << bucket(
+             r.attention_softmax_ms,
+             (!r.per_layer_attention_backends.empty() &&
+              r.per_layer_attention_backends.front() == "mlx_expanded_kv") ? "metal" : "cpu") << ","
+      << "\"attention_value_mix\":" << bucket(
+             r.attention_value_mix_ms,
+             (!r.per_layer_attention_backends.empty() &&
+              r.per_layer_attention_backends.front() == "mlx_expanded_kv") ? "metal" : "cpu") << ","
+      << "\"o_proj\":" << bucket(r.o_projection_ms, metal_or_cpu("o_proj")) << ","
+      << "\"MLP_gate_up\":" << bucket(r.gate_up_projection_ms, r.gate_backend == "metal" && r.up_backend == "metal" ? "metal" : "mixed") << ","
+      << "\"MLP_activation\":" << bucket(r.gate_up_activation_ms, r.activation_backend.c_str()) << ","
+      << "\"MLP_down\":" << bucket(r.down_projection_ms, metal_or_cpu("down")) << ","
+      << "\"final_norm\":" << bucket(r.final_norm_ms, "mixed") << ","
+      << "\"logits/top1_or_sampling\":" << bucket(r.logits_projection_ms, metal_or_cpu("logits/top1")) << ","
+      << "\"readback/sync\":" << bucket(0.0, snapshot.readback_reasons.empty() ? "metal" : "mixed")
+      << "},"
+      << "\"backend_report\":" << backend_report_json(r, metal_available, snapshot.fallback_steps) << ","
+      << "\"readback_count_per_token\":" << snapshot.readback_reasons.size() << ","
+      << "\"readback_reasons_per_token\":" << string_array(snapshot.readback_reasons) << ","
+      << "\"fallback_steps_per_token\":" << string_array(snapshot.fallback_steps) << ","
+      << "\"kv_cache_backend\":\""
+      << ((!r.per_layer_attention_backends.empty() &&
+           r.per_layer_attention_backends.front() == "mlx_expanded_kv") ? "mlx_expanded_q_heads" : "cpu")
+      << "\","
+      << "\"kv_cache_shape\":{"
+      << "\"layers_allocated\":" << snapshot.kv_layers_allocated << ","
+      << "\"positions_stored\":" << snapshot.kv_positions_stored << ","
+      << "\"k_length\":" << snapshot.k_length << ","
+      << "\"v_length\":" << snapshot.v_length << ","
+      << "\"layout\":\""
+      << ((!r.per_layer_attention_backends.empty() &&
+           r.per_layer_attention_backends.front() == "mlx_expanded_kv")
+              ? "per_layer_expanded_q_head_preallocated_mlx_float"
+              : "per_layer_vector_per_position_cpu_float")
+      << "\""
+      << "},"
+      << "\"attention_backend\":\""
+      << ((!r.per_layer_attention_backends.empty()) ? json_escape(r.per_layer_attention_backends.front()) : "cpu")
+      << "\""
+      << ",\"attention_layer_timing_summary\":"
+      << attention_layer_timing_summary_json(r)
+      << ",\"attention_backends_per_layer\":"
+      << attention_backends_json(r)
       << "}";
   return out.str();
 }
@@ -1244,6 +1460,20 @@ double vector_checksum(const std::vector<float>& values) {
   return checksum;
 }
 
+double vector_max_abs_diff(const std::vector<float>& lhs, const std::vector<float>& rhs) {
+  const std::size_t count = std::min(lhs.size(), rhs.size());
+  double diff = 0.0;
+  for (std::size_t i = 0; i < count; ++i) {
+    diff = std::max(
+        diff,
+        std::abs(static_cast<double>(lhs[i]) - static_cast<double>(rhs[i])));
+  }
+  if (lhs.size() != rhs.size()) {
+    return std::numeric_limits<double>::infinity();
+  }
+  return diff;
+}
+
 float bf16_to_float(std::uint16_t word) {
   std::uint32_t bits = static_cast<std::uint32_t>(word) << 16;
   float value = 0.0f;
@@ -1942,6 +2172,35 @@ bool use_resident_mlx_projection_arrays() {
 
 bool disable_mlx_resident_layer_block() {
   return env_truthy("RUSTY_DISABLE_MLX_RESIDENT_LAYER_BLOCK");
+}
+
+std::string experimental_mlx_attention_mode() {
+  const char* raw = std::getenv("RUSTY_ATTENTION_BACKEND");
+  if (raw == nullptr) {
+    raw = std::getenv("RUSTY_EXPERIMENTAL_MLX_ATTENTION");
+  }
+  if (raw == nullptr) {
+    return "expanded_kv";
+  }
+  std::string value(raw);
+  std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+    return static_cast<char>(std::tolower(ch));
+  });
+  if (value == "cpu" || value == "none" || value == "disabled") {
+    return "0";
+  }
+  if (value == "1" || value == "true" || value == "yes" || value == "on") {
+    return "expanded_kv";
+  }
+  return value;
+}
+
+bool experimental_mlx_attention() {
+  return !experimental_mlx_attention_mode().empty() &&
+         experimental_mlx_attention_mode() != "0" &&
+         experimental_mlx_attention_mode() != "false" &&
+         experimental_mlx_attention_mode() != "no" &&
+         experimental_mlx_attention_mode() != "off";
 }
 
 bool& mlx_quantized_linear_available_flag() {
@@ -3171,7 +3430,8 @@ std::vector<float> cached_single_token_attention_values(
     const std::vector<float>& q_values,
     const NativeLayerKvCache& layer_cache,
     const std::vector<float>& current_k_values,
-    const std::vector<float>& current_v_values) {
+    const std::vector<float>& current_v_values,
+    CachedAttentionTiming* timing = nullptr) {
   const std::size_t head_dim = 128;
   if (q_values.empty() || current_k_values.empty() || current_v_values.empty() ||
       q_values.size() % head_dim != 0 ||
@@ -3210,6 +3470,7 @@ std::vector<float> cached_single_token_attention_values(
     std::vector<double> scores(total_positions, 0.0);
     double max_score = -std::numeric_limits<double>::infinity();
 
+    auto score_start = std::chrono::steady_clock::now();
     for (std::size_t position = 0; position < total_positions; ++position) {
       const std::vector<float>& key =
           position < prior_positions ? layer_cache.keys[position] : current_k_values;
@@ -3222,8 +3483,12 @@ std::vector<float> cached_single_token_attention_values(
       scores[position] = score;
       max_score = std::max(max_score, score);
     }
+    if (timing != nullptr) {
+      add_elapsed_ms(timing->score_ms, score_start);
+    }
 
     double denom = 0.0;
+    auto softmax_start = std::chrono::steady_clock::now();
     for (double& score : scores) {
       score = std::exp(score - max_score);
       denom += score;
@@ -3231,7 +3496,11 @@ std::vector<float> cached_single_token_attention_values(
     if (denom <= 0.0 || !std::isfinite(denom)) {
       throw std::runtime_error("incremental attention softmax denominator invalid");
     }
+    if (timing != nullptr) {
+      add_elapsed_ms(timing->softmax_ms, softmax_start);
+    }
 
+    auto value_mix_start = std::chrono::steady_clock::now();
     for (std::size_t i = 0; i < head_dim; ++i) {
       double value_sum = 0.0;
       for (std::size_t position = 0; position < total_positions; ++position) {
@@ -3242,10 +3511,912 @@ std::vector<float> cached_single_token_attention_values(
       }
       attention[q_head * head_dim + i] = static_cast<float>(value_sum);
     }
+    if (timing != nullptr) {
+      add_elapsed_ms(timing->value_mix_ms, value_mix_start);
+    }
   }
 
   return attention;
 }
+
+#if defined(RUSTY_MLX_HAVE_NATIVE_LINK)
+struct MlxSingleHeadAttentionProbeResult {
+  std::vector<float> output;
+  std::vector<float> scores;
+  std::vector<float> probabilities;
+};
+
+MlxSingleHeadAttentionProbeResult mlx_single_head_attention_values_probe(
+    const std::vector<float>& q_values,
+    const NativeLayerKvCache& layer_cache,
+    const std::vector<float>& current_k_values,
+    const std::vector<float>& current_v_values,
+    std::size_t q_head,
+    std::size_t kv_head,
+    std::size_t head_dim) {
+  const std::size_t prior_positions = layer_cache.keys.size();
+  const std::size_t total_positions = prior_positions + 1;
+  if ((q_head + 1) * head_dim > q_values.size() ||
+      (kv_head + 1) * head_dim > current_k_values.size() ||
+      current_k_values.size() != current_v_values.size()) {
+    throw std::runtime_error("MLX single-head attention probe received invalid shape");
+  }
+  std::vector<float> q_head_values(head_dim, 0.0f);
+  std::vector<float> k_values(total_positions * head_dim, 0.0f);
+  std::vector<float> v_values(total_positions * head_dim, 0.0f);
+  std::copy(
+      q_values.begin() + static_cast<std::ptrdiff_t>(q_head * head_dim),
+      q_values.begin() + static_cast<std::ptrdiff_t>((q_head + 1) * head_dim),
+      q_head_values.begin());
+  for (std::size_t position = 0; position < total_positions; ++position) {
+    const std::vector<float>& key =
+        position < prior_positions ? layer_cache.keys[position] : current_k_values;
+    const std::vector<float>& value =
+        position < prior_positions ? layer_cache.values[position] : current_v_values;
+    std::copy(
+        key.begin() + static_cast<std::ptrdiff_t>(kv_head * head_dim),
+        key.begin() + static_cast<std::ptrdiff_t>((kv_head + 1) * head_dim),
+        k_values.begin() + static_cast<std::ptrdiff_t>(position * head_dim));
+    std::copy(
+        value.begin() + static_cast<std::ptrdiff_t>(kv_head * head_dim),
+        value.begin() + static_cast<std::ptrdiff_t>((kv_head + 1) * head_dim),
+        v_values.begin() + static_cast<std::ptrdiff_t>(position * head_dim));
+  }
+
+  const float inv_sqrt_dim =
+      static_cast<float>(1.0 / std::sqrt(static_cast<double>(head_dim)));
+  mlx::core::array q_array(
+      q_head_values.data(),
+      mlx::core::Shape{1, static_cast<int>(head_dim)},
+      mlx::core::float32);
+  mlx::core::array k_array(
+      k_values.data(),
+      mlx::core::Shape{static_cast<int>(total_positions), static_cast<int>(head_dim)},
+      mlx::core::float32);
+  mlx::core::array v_array(
+      v_values.data(),
+      mlx::core::Shape{static_cast<int>(total_positions), static_cast<int>(head_dim)},
+      mlx::core::float32);
+  auto scores_array =
+      mlx::core::matmul(q_array, mlx::core::transpose(k_array)) * inv_sqrt_dim;
+  auto probabilities_array = mlx::core::softmax(scores_array, -1);
+  auto output_array = mlx::core::matmul(probabilities_array, v_array);
+  mlx::core::eval(scores_array, probabilities_array, output_array);
+  mlx::core::synchronize();
+
+  const float* scores_data = scores_array.data<float>();
+  const float* probabilities_data = probabilities_array.data<float>();
+  const float* output_data = output_array.data<float>();
+  MlxSingleHeadAttentionProbeResult result;
+  result.scores.assign(scores_data, scores_data + total_positions);
+  result.probabilities.assign(probabilities_data, probabilities_data + total_positions);
+  result.output.assign(output_data, output_data + head_dim);
+  return result;
+}
+
+std::vector<float> mlx_single_token_attention_values_probe(
+    const std::vector<float>& q_values,
+    const NativeLayerKvCache& layer_cache,
+    const std::vector<float>& current_k_values,
+    const std::vector<float>& current_v_values,
+    double* timing_ms = nullptr) {
+  const std::size_t head_dim = 128;
+  if (q_values.empty() || current_k_values.empty() || current_v_values.empty() ||
+      q_values.size() % head_dim != 0 ||
+      current_k_values.size() % head_dim != 0 ||
+      current_v_values.size() % head_dim != 0 ||
+      current_k_values.size() != current_v_values.size()) {
+    throw std::runtime_error("MLX attention probe received invalid q/k/v shapes");
+  }
+  const std::size_t q_heads = q_values.size() / head_dim;
+  const std::size_t kv_heads = current_k_values.size() / head_dim;
+  if (kv_heads == 0 || q_heads % kv_heads != 0) {
+    throw std::runtime_error("MLX attention probe requires grouped query heads");
+  }
+  const std::size_t prior_positions = layer_cache.keys.size();
+  const std::size_t total_positions = prior_positions + 1;
+  const std::size_t repeat = q_heads / kv_heads;
+  const float inv_sqrt_dim = static_cast<float>(1.0 / std::sqrt(static_cast<double>(head_dim)));
+  std::vector<float> attention(q_values.size(), 0.0f);
+  auto start = std::chrono::steady_clock::now();
+
+  for (std::size_t q_head = 0; q_head < q_heads; ++q_head) {
+    const std::size_t kv_head = q_head / repeat;
+    auto head_result = mlx_single_head_attention_values_probe(
+        q_values,
+        layer_cache,
+        current_k_values,
+        current_v_values,
+        q_head,
+        kv_head,
+        head_dim);
+    std::copy(
+        head_result.output.begin(),
+        head_result.output.end(),
+        attention.begin() + static_cast<std::ptrdiff_t>(q_head * head_dim));
+  }
+
+  if (timing_ms != nullptr) {
+    *timing_ms = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - start).count();
+  }
+  return attention;
+}
+
+std::vector<float> mlx_grouped_attention_values_probe(
+    const std::vector<float>& q_values,
+    const NativeLayerKvCache& layer_cache,
+    const std::vector<float>& current_k_values,
+    const std::vector<float>& current_v_values,
+    double* timing_ms = nullptr) {
+  const std::size_t head_dim = 128;
+  if (q_values.empty() || current_k_values.empty() || current_v_values.empty() ||
+      q_values.size() % head_dim != 0 ||
+      current_k_values.size() % head_dim != 0 ||
+      current_v_values.size() % head_dim != 0 ||
+      current_k_values.size() != current_v_values.size()) {
+    throw std::runtime_error("MLX grouped attention probe received invalid q/k/v shapes");
+  }
+  const std::size_t q_heads = q_values.size() / head_dim;
+  const std::size_t kv_heads = current_k_values.size() / head_dim;
+  if (kv_heads == 0 || q_heads % kv_heads != 0) {
+    throw std::runtime_error("MLX grouped attention probe requires grouped query heads");
+  }
+  const std::size_t prior_positions = layer_cache.keys.size();
+  const std::size_t total_positions = prior_positions + 1;
+  const std::size_t q_heads_per_kv = q_heads / kv_heads;
+  const float inv_sqrt_dim = static_cast<float>(1.0 / std::sqrt(static_cast<double>(head_dim)));
+  std::vector<float> attention(q_values.size(), 0.0f);
+  auto start = std::chrono::steady_clock::now();
+
+  for (std::size_t kv_head = 0; kv_head < kv_heads; ++kv_head) {
+    std::vector<float> q_group_values(q_heads_per_kv * head_dim, 0.0f);
+    std::vector<float> k_values(total_positions * head_dim, 0.0f);
+    std::vector<float> v_values(total_positions * head_dim, 0.0f);
+    for (std::size_t local_q = 0; local_q < q_heads_per_kv; ++local_q) {
+      const std::size_t q_head = kv_head * q_heads_per_kv + local_q;
+      std::copy(
+          q_values.begin() + static_cast<std::ptrdiff_t>(q_head * head_dim),
+          q_values.begin() + static_cast<std::ptrdiff_t>((q_head + 1) * head_dim),
+          q_group_values.begin() + static_cast<std::ptrdiff_t>(local_q * head_dim));
+    }
+    for (std::size_t position = 0; position < total_positions; ++position) {
+      const std::vector<float>& key =
+          position < prior_positions ? layer_cache.keys[position] : current_k_values;
+      const std::vector<float>& value =
+          position < prior_positions ? layer_cache.values[position] : current_v_values;
+      std::copy(
+          key.begin() + static_cast<std::ptrdiff_t>(kv_head * head_dim),
+          key.begin() + static_cast<std::ptrdiff_t>((kv_head + 1) * head_dim),
+          k_values.begin() + static_cast<std::ptrdiff_t>(position * head_dim));
+      std::copy(
+          value.begin() + static_cast<std::ptrdiff_t>(kv_head * head_dim),
+          value.begin() + static_cast<std::ptrdiff_t>((kv_head + 1) * head_dim),
+          v_values.begin() + static_cast<std::ptrdiff_t>(position * head_dim));
+    }
+
+    mlx::core::array q_array(
+        q_group_values.data(),
+        mlx::core::Shape{static_cast<int>(q_heads_per_kv), static_cast<int>(head_dim)},
+        mlx::core::float32);
+    mlx::core::array k_array(
+        k_values.data(),
+        mlx::core::Shape{static_cast<int>(total_positions), static_cast<int>(head_dim)},
+        mlx::core::float32);
+    mlx::core::array v_array(
+        v_values.data(),
+        mlx::core::Shape{static_cast<int>(total_positions), static_cast<int>(head_dim)},
+        mlx::core::float32);
+    auto scores = mlx::core::matmul(q_array, mlx::core::transpose(k_array)) * inv_sqrt_dim;
+    auto probs = mlx::core::softmax(scores, -1);
+    auto mixed = mlx::core::matmul(probs, v_array);
+    mlx::core::eval(scores, probs, mixed);
+    mlx::core::synchronize();
+    const float* mixed_data = mixed.data<float>();
+    for (std::size_t local_q = 0; local_q < q_heads_per_kv; ++local_q) {
+      const std::size_t q_head = kv_head * q_heads_per_kv + local_q;
+      std::copy(
+          mixed_data + static_cast<std::ptrdiff_t>(local_q * head_dim),
+          mixed_data + static_cast<std::ptrdiff_t>((local_q + 1) * head_dim),
+          attention.begin() + static_cast<std::ptrdiff_t>(q_head * head_dim));
+    }
+  }
+
+  if (timing_ms != nullptr) {
+    *timing_ms = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - start).count();
+  }
+  return attention;
+}
+
+std::vector<float> mlx_all_head_batched_attention_values_probe(
+    const std::vector<float>& q_values,
+    const NativeLayerKvCache& layer_cache,
+    const std::vector<float>& current_k_values,
+    const std::vector<float>& current_v_values,
+    double* timing_ms = nullptr) {
+  const std::size_t head_dim = 128;
+  if (q_values.empty() || current_k_values.empty() || current_v_values.empty() ||
+      q_values.size() % head_dim != 0 ||
+      current_k_values.size() % head_dim != 0 ||
+      current_v_values.size() % head_dim != 0 ||
+      current_k_values.size() != current_v_values.size()) {
+    throw std::runtime_error("MLX all-head attention probe received invalid q/k/v shapes");
+  }
+  const std::size_t q_heads = q_values.size() / head_dim;
+  const std::size_t kv_heads = current_k_values.size() / head_dim;
+  if (kv_heads == 0 || q_heads % kv_heads != 0) {
+    throw std::runtime_error("MLX all-head attention probe requires grouped query heads");
+  }
+  const std::size_t prior_positions = layer_cache.keys.size();
+  const std::size_t total_positions = prior_positions + 1;
+  const std::size_t q_heads_per_kv = q_heads / kv_heads;
+  const float inv_sqrt_dim = static_cast<float>(1.0 / std::sqrt(static_cast<double>(head_dim)));
+  std::vector<float> kq_values(q_heads * total_positions * head_dim, 0.0f);
+  std::vector<float> vq_values(q_heads * total_positions * head_dim, 0.0f);
+  for (std::size_t q_head = 0; q_head < q_heads; ++q_head) {
+    const std::size_t kv_head = q_head / q_heads_per_kv;
+    for (std::size_t position = 0; position < total_positions; ++position) {
+      const std::vector<float>& key =
+          position < prior_positions ? layer_cache.keys[position] : current_k_values;
+      const std::vector<float>& value =
+          position < prior_positions ? layer_cache.values[position] : current_v_values;
+      const std::size_t dst = (q_head * total_positions + position) * head_dim;
+      std::copy(
+          key.begin() + static_cast<std::ptrdiff_t>(kv_head * head_dim),
+          key.begin() + static_cast<std::ptrdiff_t>((kv_head + 1) * head_dim),
+          kq_values.begin() + static_cast<std::ptrdiff_t>(dst));
+      std::copy(
+          value.begin() + static_cast<std::ptrdiff_t>(kv_head * head_dim),
+          value.begin() + static_cast<std::ptrdiff_t>((kv_head + 1) * head_dim),
+          vq_values.begin() + static_cast<std::ptrdiff_t>(dst));
+    }
+  }
+
+  auto start = std::chrono::steady_clock::now();
+  mlx::core::array q_array(
+      q_values.data(),
+      mlx::core::Shape{static_cast<int>(q_heads), 1, static_cast<int>(head_dim)},
+      mlx::core::float32);
+  mlx::core::array k_array(
+      kq_values.data(),
+      mlx::core::Shape{
+          static_cast<int>(q_heads),
+          static_cast<int>(total_positions),
+          static_cast<int>(head_dim)},
+      mlx::core::float32);
+  mlx::core::array v_array(
+      vq_values.data(),
+      mlx::core::Shape{
+          static_cast<int>(q_heads),
+          static_cast<int>(total_positions),
+          static_cast<int>(head_dim)},
+      mlx::core::float32);
+  auto scores = mlx::core::matmul(q_array, mlx::core::transpose(k_array, {0, 2, 1})) * inv_sqrt_dim;
+  auto probs = mlx::core::softmax(scores, -1);
+  auto mixed = mlx::core::matmul(probs, v_array);
+  mixed.eval();
+  mlx::core::synchronize();
+  if (timing_ms != nullptr) {
+    *timing_ms = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - start).count();
+  }
+  const float* mixed_data = mixed.data<float>();
+  std::vector<float> attention(q_values.size(), 0.0f);
+  for (std::size_t q_head = 0; q_head < q_heads; ++q_head) {
+    std::copy(
+        mixed_data + static_cast<std::ptrdiff_t>(q_head * head_dim),
+        mixed_data + static_cast<std::ptrdiff_t>((q_head + 1) * head_dim),
+        attention.begin() + static_cast<std::ptrdiff_t>(q_head * head_dim));
+  }
+  return attention;
+}
+
+std::vector<float> mlx_fast_attention_values_probe(
+    const std::vector<float>& q_values,
+    const NativeLayerKvCache& layer_cache,
+    const std::vector<float>& current_k_values,
+    const std::vector<float>& current_v_values,
+    double* timing_ms = nullptr) {
+  const std::size_t head_dim = 128;
+  if (q_values.empty() || current_k_values.empty() || current_v_values.empty() ||
+      q_values.size() % head_dim != 0 ||
+      current_k_values.size() % head_dim != 0 ||
+      current_v_values.size() % head_dim != 0 ||
+      current_k_values.size() != current_v_values.size()) {
+    throw std::runtime_error("MLX fast attention probe received invalid q/k/v shapes");
+  }
+  const std::size_t q_heads = q_values.size() / head_dim;
+  const std::size_t kv_heads = current_k_values.size() / head_dim;
+  if (kv_heads == 0 || q_heads % kv_heads != 0) {
+    throw std::runtime_error("MLX fast attention probe requires grouped query heads");
+  }
+  const std::size_t prior_positions = layer_cache.keys.size();
+  const std::size_t total_positions = prior_positions + 1;
+  const std::size_t q_heads_per_kv = q_heads / kv_heads;
+  std::vector<float> kq_values(q_heads * total_positions * head_dim, 0.0f);
+  std::vector<float> vq_values(q_heads * total_positions * head_dim, 0.0f);
+  for (std::size_t q_head = 0; q_head < q_heads; ++q_head) {
+    const std::size_t kv_head = q_head / q_heads_per_kv;
+    for (std::size_t position = 0; position < total_positions; ++position) {
+      const std::vector<float>& key =
+          position < prior_positions ? layer_cache.keys[position] : current_k_values;
+      const std::vector<float>& value =
+          position < prior_positions ? layer_cache.values[position] : current_v_values;
+      const std::size_t dst = (q_head * total_positions + position) * head_dim;
+      std::copy(
+          key.begin() + static_cast<std::ptrdiff_t>(kv_head * head_dim),
+          key.begin() + static_cast<std::ptrdiff_t>((kv_head + 1) * head_dim),
+          kq_values.begin() + static_cast<std::ptrdiff_t>(dst));
+      std::copy(
+          value.begin() + static_cast<std::ptrdiff_t>(kv_head * head_dim),
+          value.begin() + static_cast<std::ptrdiff_t>((kv_head + 1) * head_dim),
+          vq_values.begin() + static_cast<std::ptrdiff_t>(dst));
+    }
+  }
+
+  const float scale = static_cast<float>(1.0 / std::sqrt(static_cast<double>(head_dim)));
+  auto start = std::chrono::steady_clock::now();
+  mlx::core::array q_array(
+      q_values.data(),
+      mlx::core::Shape{1, static_cast<int>(q_heads), 1, static_cast<int>(head_dim)},
+      mlx::core::float32);
+  mlx::core::array k_array(
+      kq_values.data(),
+      mlx::core::Shape{
+          1,
+          static_cast<int>(q_heads),
+          static_cast<int>(total_positions),
+          static_cast<int>(head_dim)},
+      mlx::core::float32);
+  mlx::core::array v_array(
+      vq_values.data(),
+      mlx::core::Shape{
+          1,
+          static_cast<int>(q_heads),
+          static_cast<int>(total_positions),
+          static_cast<int>(head_dim)},
+      mlx::core::float32);
+  auto output = mlx::core::fast::scaled_dot_product_attention(
+      q_array,
+      k_array,
+      v_array,
+      scale,
+      "");
+  output.eval();
+  mlx::core::synchronize();
+  if (timing_ms != nullptr) {
+    *timing_ms = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - start).count();
+  }
+  const float* output_data = output.data<float>();
+  return std::vector<float>(output_data, output_data + q_values.size());
+}
+
+struct MlxResidentKvCacheProbe {
+  std::optional<mlx::core::array> keys;
+  std::optional<mlx::core::array> values;
+  std::size_t current_len = 0;
+  double append_ms = 0.0;
+  std::string append_mode = "concat_probe_only";
+};
+
+struct MlxExpandedResidentKvCacheProbe {
+  std::optional<mlx::core::array> keys;
+  std::optional<mlx::core::array> values;
+  std::size_t current_len = 0;
+  double append_ms = 0.0;
+  std::string append_mode = "expanded_q_heads_concat_probe_only";
+};
+
+void mlx_resident_kv_cache_append_probe(
+    MlxResidentKvCacheProbe& cache,
+    const std::vector<float>& current_k_values,
+    const std::vector<float>& current_v_values,
+    std::size_t kv_heads,
+    std::size_t head_dim) {
+  if (current_k_values.size() != kv_heads * head_dim ||
+      current_v_values.size() != kv_heads * head_dim) {
+    throw std::runtime_error("MLX resident KV append probe received invalid k/v shapes");
+  }
+  auto start = std::chrono::steady_clock::now();
+  mlx::core::array current_k(
+      current_k_values.data(),
+      mlx::core::Shape{static_cast<int>(kv_heads), 1, static_cast<int>(head_dim)},
+      mlx::core::float32);
+  mlx::core::array current_v(
+      current_v_values.data(),
+      mlx::core::Shape{static_cast<int>(kv_heads), 1, static_cast<int>(head_dim)},
+      mlx::core::float32);
+  if (cache.keys.has_value() && cache.values.has_value()) {
+    cache.keys = mlx::core::concatenate({*cache.keys, current_k}, 1);
+    cache.values = mlx::core::concatenate({*cache.values, current_v}, 1);
+  } else {
+    cache.keys = current_k;
+    cache.values = current_v;
+  }
+  cache.keys->eval();
+  cache.values->eval();
+  mlx::core::synchronize();
+  cache.current_len += 1;
+  cache.append_ms += std::chrono::duration<double, std::milli>(
+      std::chrono::steady_clock::now() - start).count();
+}
+
+std::vector<float> mlx_resident_kv_attention_values_probe(
+    const std::vector<float>& q_values,
+    const MlxResidentKvCacheProbe& cache,
+    std::size_t q_heads,
+    std::size_t kv_heads,
+    std::size_t head_dim,
+    double* timing_ms = nullptr) {
+  if (!cache.keys.has_value() || !cache.values.has_value() ||
+      q_values.size() != q_heads * head_dim ||
+      q_heads == 0 || kv_heads == 0 || q_heads % kv_heads != 0) {
+    throw std::runtime_error("MLX resident KV attention probe received invalid state");
+  }
+  const std::size_t q_heads_per_kv = q_heads / kv_heads;
+  std::vector<std::uint32_t> kv_indices(q_heads, 0);
+  for (std::size_t q_head = 0; q_head < q_heads; ++q_head) {
+    kv_indices[q_head] = static_cast<std::uint32_t>(q_head / q_heads_per_kv);
+  }
+  const float inv_sqrt_dim =
+      static_cast<float>(1.0 / std::sqrt(static_cast<double>(head_dim)));
+  auto start = std::chrono::steady_clock::now();
+  mlx::core::array q_array(
+      q_values.data(),
+      mlx::core::Shape{static_cast<int>(q_heads), 1, static_cast<int>(head_dim)},
+      mlx::core::float32);
+  mlx::core::array indices_array(
+      kv_indices.data(),
+      mlx::core::Shape{static_cast<int>(q_heads)},
+      mlx::core::uint32);
+  auto kq = mlx::core::take(*cache.keys, indices_array, 0);
+  auto vq = mlx::core::take(*cache.values, indices_array, 0);
+  auto scores = mlx::core::matmul(q_array, mlx::core::transpose(kq, {0, 2, 1})) * inv_sqrt_dim;
+  auto probs = mlx::core::softmax(scores, -1);
+  auto mixed = mlx::core::matmul(probs, vq);
+  mixed.eval();
+  mlx::core::synchronize();
+  if (timing_ms != nullptr) {
+    *timing_ms = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - start).count();
+  }
+  const float* mixed_data = mixed.data<float>();
+  std::vector<float> attention(q_values.size(), 0.0f);
+  for (std::size_t q_head = 0; q_head < q_heads; ++q_head) {
+    std::copy(
+        mixed_data + static_cast<std::ptrdiff_t>(q_head * head_dim),
+        mixed_data + static_cast<std::ptrdiff_t>((q_head + 1) * head_dim),
+        attention.begin() + static_cast<std::ptrdiff_t>(q_head * head_dim));
+  }
+  return attention;
+}
+
+void mlx_expanded_resident_kv_cache_append_probe(
+    MlxExpandedResidentKvCacheProbe& cache,
+    const std::vector<float>& current_k_values,
+    const std::vector<float>& current_v_values,
+    std::size_t q_heads,
+    std::size_t kv_heads,
+    std::size_t head_dim) {
+  if (kv_heads == 0 || q_heads == 0 || q_heads % kv_heads != 0 ||
+      current_k_values.size() != kv_heads * head_dim ||
+      current_v_values.size() != kv_heads * head_dim) {
+    throw std::runtime_error("MLX expanded resident KV append probe received invalid k/v shapes");
+  }
+  const std::size_t q_heads_per_kv = q_heads / kv_heads;
+  std::vector<float> expanded_k(q_heads * head_dim, 0.0f);
+  std::vector<float> expanded_v(q_heads * head_dim, 0.0f);
+  for (std::size_t q_head = 0; q_head < q_heads; ++q_head) {
+    const std::size_t kv_head = q_head / q_heads_per_kv;
+    std::copy(
+        current_k_values.begin() + static_cast<std::ptrdiff_t>(kv_head * head_dim),
+        current_k_values.begin() + static_cast<std::ptrdiff_t>((kv_head + 1) * head_dim),
+        expanded_k.begin() + static_cast<std::ptrdiff_t>(q_head * head_dim));
+    std::copy(
+        current_v_values.begin() + static_cast<std::ptrdiff_t>(kv_head * head_dim),
+        current_v_values.begin() + static_cast<std::ptrdiff_t>((kv_head + 1) * head_dim),
+        expanded_v.begin() + static_cast<std::ptrdiff_t>(q_head * head_dim));
+  }
+  auto start = std::chrono::steady_clock::now();
+  mlx::core::array current_k(
+      expanded_k.data(),
+      mlx::core::Shape{static_cast<int>(q_heads), 1, static_cast<int>(head_dim)},
+      mlx::core::float32);
+  mlx::core::array current_v(
+      expanded_v.data(),
+      mlx::core::Shape{static_cast<int>(q_heads), 1, static_cast<int>(head_dim)},
+      mlx::core::float32);
+  if (cache.keys.has_value() && cache.values.has_value()) {
+    cache.keys = mlx::core::concatenate({*cache.keys, current_k}, 1);
+    cache.values = mlx::core::concatenate({*cache.values, current_v}, 1);
+  } else {
+    cache.keys = current_k;
+    cache.values = current_v;
+  }
+  cache.keys->eval();
+  cache.values->eval();
+  mlx::core::synchronize();
+  cache.current_len += 1;
+  cache.append_ms += std::chrono::duration<double, std::milli>(
+      std::chrono::steady_clock::now() - start).count();
+}
+
+std::vector<float> mlx_expanded_resident_kv_attention_values_probe(
+    const std::vector<float>& q_values,
+    const MlxExpandedResidentKvCacheProbe& cache,
+    std::size_t q_heads,
+    std::size_t head_dim,
+    double* timing_ms = nullptr) {
+  if (!cache.keys.has_value() || !cache.values.has_value() ||
+      q_values.size() != q_heads * head_dim) {
+    throw std::runtime_error("MLX expanded resident KV attention probe received invalid state");
+  }
+  const float inv_sqrt_dim =
+      static_cast<float>(1.0 / std::sqrt(static_cast<double>(head_dim)));
+  auto start = std::chrono::steady_clock::now();
+  mlx::core::array q_array(
+      q_values.data(),
+      mlx::core::Shape{static_cast<int>(q_heads), 1, static_cast<int>(head_dim)},
+      mlx::core::float32);
+  auto scores =
+      mlx::core::matmul(q_array, mlx::core::transpose(*cache.keys, {0, 2, 1})) *
+      inv_sqrt_dim;
+  auto probs = mlx::core::softmax(scores, -1);
+  auto mixed = mlx::core::matmul(probs, *cache.values);
+  mixed.eval();
+  mlx::core::synchronize();
+  if (timing_ms != nullptr) {
+    *timing_ms = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - start).count();
+  }
+  const float* mixed_data = mixed.data<float>();
+  std::vector<float> attention(q_values.size(), 0.0f);
+  for (std::size_t q_head = 0; q_head < q_heads; ++q_head) {
+    std::copy(
+        mixed_data + static_cast<std::ptrdiff_t>(q_head * head_dim),
+        mixed_data + static_cast<std::ptrdiff_t>((q_head + 1) * head_dim),
+        attention.begin() + static_cast<std::ptrdiff_t>(q_head * head_dim));
+  }
+  return attention;
+}
+
+void mlx_expanded_kv_cache_append_preallocated(
+    NativeLayerKvCache& layer_cache,
+    const std::vector<float>& current_k_values,
+    const std::vector<float>& current_v_values,
+    std::size_t q_heads,
+    std::size_t kv_heads,
+    std::size_t head_dim,
+    std::size_t max_seq,
+    double* append_ms = nullptr) {
+  if (max_seq == 0) {
+    throw std::runtime_error("expanded KV cache requires max_seq");
+  }
+  if (layer_cache.expanded_current_len >= max_seq) {
+    throw std::runtime_error("expanded KV cache exceeded max_seq");
+  }
+  if (kv_heads == 0 || q_heads == 0 || q_heads % kv_heads != 0 ||
+      current_k_values.size() != kv_heads * head_dim ||
+      current_v_values.size() != kv_heads * head_dim) {
+    throw std::runtime_error("expanded KV cache append received invalid k/v shapes");
+  }
+  const std::size_t q_heads_per_kv = q_heads / kv_heads;
+  std::vector<float> expanded_k(q_heads * head_dim, 0.0f);
+  std::vector<float> expanded_v(q_heads * head_dim, 0.0f);
+  for (std::size_t q_head = 0; q_head < q_heads; ++q_head) {
+    const std::size_t kv_head = q_head / q_heads_per_kv;
+    std::copy(
+        current_k_values.begin() + static_cast<std::ptrdiff_t>(kv_head * head_dim),
+        current_k_values.begin() + static_cast<std::ptrdiff_t>((kv_head + 1) * head_dim),
+        expanded_k.begin() + static_cast<std::ptrdiff_t>(q_head * head_dim));
+    std::copy(
+        current_v_values.begin() + static_cast<std::ptrdiff_t>(kv_head * head_dim),
+        current_v_values.begin() + static_cast<std::ptrdiff_t>((kv_head + 1) * head_dim),
+        expanded_v.begin() + static_cast<std::ptrdiff_t>(q_head * head_dim));
+  }
+  auto start = std::chrono::steady_clock::now();
+  if (!layer_cache.expanded_keys.has_value() || !layer_cache.expanded_values.has_value()) {
+    layer_cache.expanded_keys = mlx::core::zeros(
+        mlx::core::Shape{
+            static_cast<int>(q_heads),
+            static_cast<int>(max_seq),
+            static_cast<int>(head_dim)},
+        mlx::core::float32);
+    layer_cache.expanded_values = mlx::core::zeros(
+        mlx::core::Shape{
+            static_cast<int>(q_heads),
+            static_cast<int>(max_seq),
+            static_cast<int>(head_dim)},
+        mlx::core::float32);
+  }
+  mlx::core::array current_k(
+      expanded_k.data(),
+      mlx::core::Shape{static_cast<int>(q_heads), 1, static_cast<int>(head_dim)},
+      mlx::core::float32);
+  mlx::core::array current_v(
+      expanded_v.data(),
+      mlx::core::Shape{static_cast<int>(q_heads), 1, static_cast<int>(head_dim)},
+      mlx::core::float32);
+  const int pos = static_cast<int>(layer_cache.expanded_current_len);
+  layer_cache.expanded_keys = mlx::core::slice_update(
+      *layer_cache.expanded_keys,
+      current_k,
+      mlx::core::Shape{0, pos, 0},
+      mlx::core::Shape{static_cast<int>(q_heads), pos + 1, static_cast<int>(head_dim)});
+  layer_cache.expanded_values = mlx::core::slice_update(
+      *layer_cache.expanded_values,
+      current_v,
+      mlx::core::Shape{0, pos, 0},
+      mlx::core::Shape{static_cast<int>(q_heads), pos + 1, static_cast<int>(head_dim)});
+  layer_cache.expanded_keys->eval();
+  layer_cache.expanded_values->eval();
+  mlx::core::synchronize();
+  layer_cache.expanded_current_len += 1;
+  if (append_ms != nullptr) {
+    *append_ms += std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - start).count();
+  }
+}
+
+std::vector<float> mlx_expanded_kv_cache_attention_preallocated(
+    const std::vector<float>& q_values,
+    const NativeLayerKvCache& layer_cache,
+    std::size_t q_heads,
+    std::size_t head_dim,
+    double* attention_ms = nullptr) {
+  if (!layer_cache.expanded_keys.has_value() || !layer_cache.expanded_values.has_value() ||
+      layer_cache.expanded_current_len == 0 ||
+      q_values.size() != q_heads * head_dim) {
+    throw std::runtime_error("expanded KV cache attention received invalid state");
+  }
+  const float inv_sqrt_dim =
+      static_cast<float>(1.0 / std::sqrt(static_cast<double>(head_dim)));
+  auto start = std::chrono::steady_clock::now();
+  mlx::core::array q_array(
+      q_values.data(),
+      mlx::core::Shape{static_cast<int>(q_heads), 1, static_cast<int>(head_dim)},
+      mlx::core::float32);
+  auto key_slice = mlx::core::slice(
+      *layer_cache.expanded_keys,
+      mlx::core::Shape{0, 0, 0},
+      mlx::core::Shape{
+          static_cast<int>(q_heads),
+          static_cast<int>(layer_cache.expanded_current_len),
+          static_cast<int>(head_dim)});
+  auto value_slice = mlx::core::slice(
+      *layer_cache.expanded_values,
+      mlx::core::Shape{0, 0, 0},
+      mlx::core::Shape{
+          static_cast<int>(q_heads),
+          static_cast<int>(layer_cache.expanded_current_len),
+          static_cast<int>(head_dim)});
+  auto scores =
+      mlx::core::matmul(q_array, mlx::core::transpose(key_slice, {0, 2, 1})) *
+      inv_sqrt_dim;
+  auto probs = mlx::core::softmax(scores, -1);
+  auto mixed = mlx::core::matmul(probs, value_slice);
+  mixed.eval();
+  mlx::core::synchronize();
+  if (attention_ms != nullptr) {
+    *attention_ms += std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - start).count();
+  }
+  const float* mixed_data = mixed.data<float>();
+  std::vector<float> attention(q_values.size(), 0.0f);
+  for (std::size_t q_head = 0; q_head < q_heads; ++q_head) {
+    std::copy(
+        mixed_data + static_cast<std::ptrdiff_t>(q_head * head_dim),
+        mixed_data + static_cast<std::ptrdiff_t>((q_head + 1) * head_dim),
+        attention.begin() + static_cast<std::ptrdiff_t>(q_head * head_dim));
+  }
+  return attention;
+}
+
+std::string mlx_attention_worst_head_diagnostic_json(
+    const std::vector<float>& q_values,
+    const NativeLayerKvCache& layer_cache,
+    const std::vector<float>& current_k_values,
+    const std::vector<float>& current_v_values,
+    std::size_t q_head,
+    std::size_t kv_head) {
+  const std::size_t head_dim = 128;
+  const std::size_t prior_positions = layer_cache.keys.size();
+  const std::size_t total_positions = prior_positions + 1;
+  if ((q_head + 1) * head_dim > q_values.size() ||
+      (kv_head + 1) * head_dim > current_k_values.size() ||
+      current_k_values.size() != current_v_values.size()) {
+    return "{\"available\":false,\"error\":\"bad_head_or_shape\"}";
+  }
+  auto first_n = [](const std::vector<float>& values, std::size_t n) {
+    std::vector<float> out;
+    out.reserve(std::min(n, values.size()));
+    for (std::size_t i = 0; i < values.size() && i < n; ++i) {
+      out.push_back(values[i]);
+    }
+    return out;
+  };
+  auto last_n = [](const std::vector<float>& values, std::size_t n) {
+    std::vector<float> out;
+    const std::size_t start = values.size() > n ? values.size() - n : 0;
+    out.reserve(values.size() - start);
+    for (std::size_t i = start; i < values.size(); ++i) {
+      out.push_back(values[i]);
+    }
+    return out;
+  };
+  auto top_positions_json = [](const std::vector<float>& values, std::size_t n) {
+    std::vector<std::pair<std::size_t, float>> indexed;
+    indexed.reserve(values.size());
+    for (std::size_t i = 0; i < values.size(); ++i) {
+      indexed.emplace_back(i, values[i]);
+    }
+    std::sort(indexed.begin(), indexed.end(), [](const auto& a, const auto& b) {
+      return a.second > b.second;
+    });
+    std::ostringstream out;
+    out << "[";
+    const std::size_t count = std::min(n, indexed.size());
+    for (std::size_t i = 0; i < count; ++i) {
+      if (i > 0) {
+        out << ",";
+      }
+      out << "{\"position\":" << indexed[i].first << ",\"value\":" << indexed[i].second << "}";
+    }
+    out << "]";
+    return out.str();
+  };
+  auto vector_window_json = [&](const std::vector<float>& values) {
+    std::ostringstream out;
+    out << "{"
+        << "\"len\":" << values.size() << ","
+        << "\"checksum\":" << vector_checksum(values) << ","
+        << "\"first16\":" << json_array_float_to_string(first_n(values, 16)) << ","
+        << "\"last16\":" << json_array_float_to_string(last_n(values, 16))
+        << "}";
+    return out.str();
+  };
+  auto cache_positions_json = [&](bool keys) {
+    std::ostringstream out;
+    out << "[";
+    const std::size_t count = std::min<std::size_t>(3, total_positions);
+    for (std::size_t position = 0; position < count; ++position) {
+      if (position > 0) {
+        out << ",";
+      }
+      const std::vector<float>& source =
+          position < prior_positions
+              ? (keys ? layer_cache.keys[position] : layer_cache.values[position])
+              : (keys ? current_k_values : current_v_values);
+      std::vector<float> head_values(head_dim, 0.0f);
+      std::copy(
+          source.begin() + static_cast<std::ptrdiff_t>(kv_head * head_dim),
+          source.begin() + static_cast<std::ptrdiff_t>((kv_head + 1) * head_dim),
+          head_values.begin());
+      out << "{"
+          << "\"position\":" << position << ","
+          << "\"checksum\":" << vector_checksum(head_values) << ","
+          << "\"first16\":" << json_array_float_to_string(first_n(head_values, 16))
+          << "}";
+    }
+    out << "]";
+    return out.str();
+  };
+
+  std::vector<float> q_head_values(head_dim, 0.0f);
+  std::vector<float> k_values(total_positions * head_dim, 0.0f);
+  std::vector<float> v_values(total_positions * head_dim, 0.0f);
+  std::copy(
+      q_values.begin() + static_cast<std::ptrdiff_t>(q_head * head_dim),
+      q_values.begin() + static_cast<std::ptrdiff_t>((q_head + 1) * head_dim),
+      q_head_values.begin());
+  for (std::size_t position = 0; position < total_positions; ++position) {
+    const std::vector<float>& key =
+        position < prior_positions ? layer_cache.keys[position] : current_k_values;
+    const std::vector<float>& value =
+        position < prior_positions ? layer_cache.values[position] : current_v_values;
+    std::copy(
+        key.begin() + static_cast<std::ptrdiff_t>(kv_head * head_dim),
+        key.begin() + static_cast<std::ptrdiff_t>((kv_head + 1) * head_dim),
+        k_values.begin() + static_cast<std::ptrdiff_t>(position * head_dim));
+    std::copy(
+        value.begin() + static_cast<std::ptrdiff_t>(kv_head * head_dim),
+        value.begin() + static_cast<std::ptrdiff_t>((kv_head + 1) * head_dim),
+        v_values.begin() + static_cast<std::ptrdiff_t>(position * head_dim));
+  }
+
+  const double inv_sqrt_dim = 1.0 / std::sqrt(static_cast<double>(head_dim));
+  std::vector<float> cpu_scores(total_positions, 0.0f);
+  double max_score = -std::numeric_limits<double>::infinity();
+  for (std::size_t position = 0; position < total_positions; ++position) {
+    double score = 0.0;
+    for (std::size_t i = 0; i < head_dim; ++i) {
+      score += static_cast<double>(q_head_values[i]) *
+               static_cast<double>(k_values[position * head_dim + i]);
+    }
+    score *= inv_sqrt_dim;
+    cpu_scores[position] = static_cast<float>(score);
+    max_score = std::max(max_score, score);
+  }
+  std::vector<float> cpu_probs(total_positions, 0.0f);
+  double cpu_prob_sum = 0.0;
+  for (std::size_t i = 0; i < total_positions; ++i) {
+    const double value = std::exp(static_cast<double>(cpu_scores[i]) - max_score);
+    cpu_probs[i] = static_cast<float>(value);
+    cpu_prob_sum += value;
+  }
+  if (cpu_prob_sum > 0.0) {
+    for (float& value : cpu_probs) {
+      value = static_cast<float>(static_cast<double>(value) / cpu_prob_sum);
+    }
+  }
+  std::vector<float> cpu_output(head_dim, 0.0f);
+  for (std::size_t i = 0; i < head_dim; ++i) {
+    double sum = 0.0;
+    for (std::size_t position = 0; position < total_positions; ++position) {
+      sum += static_cast<double>(cpu_probs[position]) *
+             static_cast<double>(v_values[position * head_dim + i]);
+    }
+    cpu_output[i] = static_cast<float>(sum);
+  }
+
+  auto mlx_head = mlx_single_head_attention_values_probe(
+      q_values,
+      layer_cache,
+      current_k_values,
+      current_v_values,
+      q_head,
+      kv_head,
+      head_dim);
+  const std::vector<float>& mlx_scores = mlx_head.scores;
+  const std::vector<float>& mlx_probs = mlx_head.probabilities;
+  const std::vector<float>& mlx_output = mlx_head.output;
+  double mlx_prob_sum = 0.0;
+  for (float value : mlx_probs) {
+    mlx_prob_sum += static_cast<double>(value);
+  }
+  const auto cpu_argmax = static_cast<std::size_t>(
+      std::distance(cpu_scores.begin(), std::max_element(cpu_scores.begin(), cpu_scores.end())));
+  const auto mlx_argmax = static_cast<std::size_t>(
+      std::distance(mlx_scores.begin(), std::max_element(mlx_scores.begin(), mlx_scores.end())));
+
+  std::ostringstream out;
+  out << "{"
+      << "\"available\":true,"
+      << "\"q_head\":" << q_head << ","
+      << "\"kv_head\":" << kv_head << ","
+      << "\"sequence_length\":" << total_positions << ","
+      << "\"q_vector\":" << vector_window_json(q_head_values) << ","
+      << "\"k_cache_first3\":" << cache_positions_json(true) << ","
+      << "\"v_cache_first3\":" << cache_positions_json(false) << ","
+      << "\"scores\":{"
+      << "\"cpu\":" << vector_window_json(cpu_scores) << ","
+      << "\"mlx\":" << vector_window_json(mlx_scores) << ","
+      << "\"max_abs_diff\":" << vector_max_abs_diff(cpu_scores, mlx_scores) << ","
+      << "\"argmax_cpu\":" << cpu_argmax << ","
+      << "\"argmax_mlx\":" << mlx_argmax << ","
+      << "\"top5_cpu\":" << top_positions_json(cpu_scores, 5) << ","
+      << "\"top5_mlx\":" << top_positions_json(mlx_scores, 5)
+      << "},"
+      << "\"probabilities\":{"
+      << "\"cpu\":" << vector_window_json(cpu_probs) << ","
+      << "\"mlx\":" << vector_window_json(mlx_probs) << ","
+      << "\"max_abs_diff\":" << vector_max_abs_diff(cpu_probs, mlx_probs) << ","
+      << "\"sum_cpu\":" << vector_checksum(cpu_probs) << ","
+      << "\"sum_mlx\":" << mlx_prob_sum << ","
+      << "\"top5_cpu\":" << top_positions_json(cpu_probs, 5) << ","
+      << "\"top5_mlx\":" << top_positions_json(mlx_probs, 5)
+      << "},"
+      << "\"value_mix_output\":{"
+      << "\"cpu\":" << vector_window_json(cpu_output) << ","
+      << "\"mlx\":" << vector_window_json(mlx_output) << ","
+      << "\"max_abs_diff\":" << vector_max_abs_diff(cpu_output, mlx_output)
+      << "}"
+      << "}";
+  return out.str();
+}
+#endif
 
 mlx::core::array make_dequantized_slice_array(
     const TensorGroupRecord& record,
@@ -3672,12 +4843,23 @@ std::vector<float> layer_attention_residual_resident_incremental_from_input(
     add_elapsed_ms(timing->qkv_projection_ms, qkv_start);
   }
   MlxQuantizedLinearStepScope attention_scope("attention");
+  CachedAttentionTiming attention_timing;
   std::vector<float> attention_values = cached_single_token_attention_values(
       q_values,
       kv_cache.layers[layer],
       k_values,
-      v_values);
+      v_values,
+      &attention_timing);
+  auto kv_append_start = std::chrono::steady_clock::now();
   append_native_kv(&kv_cache, layer, k_values, v_values);
+  if (timing != nullptr) {
+    add_elapsed_ms(attention_timing.kv_append_ms, kv_append_start);
+    timing->kv_append_ms += attention_timing.kv_append_ms;
+    timing->attention_score_ms += attention_timing.score_ms;
+    timing->attention_softmax_ms += attention_timing.softmax_ms;
+    timing->attention_value_mix_ms += attention_timing.value_mix_ms;
+    timing->per_layer_attention_ms.push_back(attention_timing.total_attention_ms());
+  }
   auto o_start = std::chrono::steady_clock::now();
   MlxQuantizedLinearStepScope o_scope("o_proj");
   std::vector<float> residual_values;
@@ -3768,12 +4950,81 @@ ResidentDecodeValue layer_decode_value_resident_incremental_from_input(
   apply_active_rope_to_qk(q_values, k_values, rope_position);
 
   MlxQuantizedLinearStepScope attention_scope("attention");
-  std::vector<float> attention_values = cached_single_token_attention_values(
-      q_values,
-      kv_cache.layers[layer],
-      k_values,
-      v_values);
+  CachedAttentionTiming attention_timing;
+  std::vector<float> attention_values;
+  std::string attention_backend = "cpu";
+  std::string attention_fallback_reason;
+  if (experimental_mlx_attention()) {
+    auto attention_start = std::chrono::steady_clock::now();
+    try {
+      const std::string attention_mode = experimental_mlx_attention_mode();
+      if (attention_mode == "expanded_kv") {
+        double append_ms = 0.0;
+        double attention_ms = 0.0;
+        mlx_expanded_kv_cache_append_preallocated(
+            kv_cache.layers[layer],
+            k_values,
+            v_values,
+            active_rope_config().num_attention_heads,
+            active_rope_config().num_key_value_heads,
+            active_rope_config().head_dim,
+            static_cast<std::size_t>(kv_cache.max_seq),
+            &append_ms);
+        attention_values = mlx_expanded_kv_cache_attention_preallocated(
+            q_values,
+            kv_cache.layers[layer],
+            active_rope_config().num_attention_heads,
+            active_rope_config().head_dim,
+            &attention_ms);
+        attention_timing.kv_append_ms += append_ms;
+        attention_timing.value_mix_ms += attention_ms;
+        attention_backend = "mlx_expanded_kv";
+      } else if (attention_mode == "batched") {
+        attention_values = mlx_all_head_batched_attention_values_probe(
+            q_values,
+            kv_cache.layers[layer],
+            k_values,
+            v_values);
+        attention_backend = "mlx_batched";
+      } else {
+        attention_values = mlx_single_token_attention_values_probe(
+            q_values,
+            kv_cache.layers[layer],
+            k_values,
+            v_values);
+        attention_backend = "mlx";
+      }
+      attention_timing.value_mix_ms += std::chrono::duration<double, std::milli>(
+          std::chrono::steady_clock::now() - attention_start).count();
+    } catch (const std::exception& e) {
+      attention_fallback_reason = e.what();
+    } catch (...) {
+      attention_fallback_reason = "unknown_exception";
+    }
+  }
+  if (attention_values.empty()) {
+    attention_values = cached_single_token_attention_values(
+        q_values,
+        kv_cache.layers[layer],
+        k_values,
+        v_values,
+        &attention_timing);
+    if (attention_backend == "mlx") {
+      attention_backend = "cpu";
+    }
+  }
+  auto kv_append_start = std::chrono::steady_clock::now();
   append_native_kv(&kv_cache, layer, k_values, v_values);
+  if (timing != nullptr) {
+    add_elapsed_ms(attention_timing.kv_append_ms, kv_append_start);
+    timing->kv_append_ms += attention_timing.kv_append_ms;
+    timing->attention_score_ms += attention_timing.score_ms;
+    timing->attention_softmax_ms += attention_timing.softmax_ms;
+    timing->attention_value_mix_ms += attention_timing.value_mix_ms;
+    timing->per_layer_attention_ms.push_back(attention_timing.total_attention_ms());
+    timing->per_layer_attention_backends.push_back(attention_backend);
+    timing->per_layer_attention_fallback_reasons.push_back(attention_fallback_reason);
+  }
 
   auto o_start = std::chrono::steady_clock::now();
   MlxProjectionTiming o_timing;
@@ -7106,6 +8357,8 @@ const char* rusty_mlx_fastsmoke_generation_probe_json(
     kv_cache.owner_session = "fastsmoke_generation_probe";
     kv_cache.layers.resize(static_cast<std::size_t>(layers));
     kv_cache.layers_allocated = layers;
+    kv_cache.max_seq = static_cast<std::uint64_t>(
+        prompt_token_ids.size() + static_cast<std::size_t>(generated_tokens) + 1);
 
     mlx_quantized_linear_runtime_fallback_used = false;
     mlx_quantized_linear_fallback_steps.clear();
@@ -7158,6 +8411,30 @@ const char* rusty_mlx_fastsmoke_generation_probe_json(
     std::string stop_reason = "max_tokens";
     std::uint64_t stop_token_id = 0;
     ResidentDecodeResult last_incremental_result;
+    std::vector<DecodeTimingSnapshot> diagnostic_snapshots;
+    auto should_capture_decode_snapshot = [](std::uint64_t token_position) {
+      return token_position == 1 ||
+             token_position == 8 ||
+             token_position == 16 ||
+             token_position == 32 ||
+             token_position == 64 ||
+             token_position == 128 ||
+             token_position == 192 ||
+             token_position == 256;
+    };
+    auto first_kv_lengths = [](const NativeSessionKvCache& cache) {
+      std::pair<std::size_t, std::size_t> lengths{0, 0};
+      if (!cache.layers.empty()) {
+        const auto& layer = cache.layers[0];
+        if (!layer.keys.empty()) {
+          lengths.first = layer.keys.back().size();
+        }
+        if (!layer.values.empty()) {
+          lengths.second = layer.values.back().size();
+        }
+      }
+      return lengths;
+    };
     const auto generation_start = std::chrono::steady_clock::now();
     for (std::uint64_t step = 0; step < generated_tokens; ++step) {
       mlx_quantized_linear_runtime_fallback_used = false;
@@ -7242,6 +8519,21 @@ const char* rusty_mlx_fastsmoke_generation_probe_json(
       generated_scores.push_back(top_token_score);
       per_token_incremental_ms.push_back(incremental_ms);
       fallback_steps_per_token.push_back(mlx_quantized_linear_fallback_steps);
+      const std::uint64_t token_position = step + 1;
+      if (should_capture_decode_snapshot(token_position)) {
+        const auto kv_lengths = first_kv_lengths(kv_cache);
+        DecodeTimingSnapshot snapshot;
+        snapshot.token_position = token_position;
+        snapshot.sequence_length_at_token = kv_cache.positions_stored;
+        snapshot.kv_layers_allocated = kv_cache.layers_allocated;
+        snapshot.kv_positions_stored = kv_cache.positions_stored;
+        snapshot.k_length = kv_lengths.first;
+        snapshot.v_length = kv_lengths.second;
+        snapshot.result = incremental_result;
+        snapshot.fallback_steps = mlx_quantized_linear_fallback_steps;
+        snapshot.readback_reasons = mlx_decode_readback_reasons;
+        diagnostic_snapshots.push_back(std::move(snapshot));
+      }
       last_logits_len = logits_len;
       last_incremental_result = incremental_result;
       std::string matched_stop_reason;
@@ -7269,6 +8561,7 @@ const char* rusty_mlx_fastsmoke_generation_probe_json(
     second_kv_cache.owner_session = "fastsmoke_generation_probe_second";
     second_kv_cache.layers.resize(static_cast<std::size_t>(layers));
     second_kv_cache.layers_allocated = layers;
+    second_kv_cache.max_seq = kv_cache.max_seq;
     auto second_prompt_start = std::chrono::steady_clock::now();
     ResidentDecodeResult second_prompt_result;
     ResidentDecodeValue second_current_value(mlx_array_from_vector(
@@ -7437,6 +8730,20 @@ const char* rusty_mlx_fastsmoke_generation_probe_json(
     auto fallback_steps_per_token_json = [&]() {
       return fallback_steps_json_for(fallback_steps_per_token);
     };
+    auto diagnostic_snapshots_json = [&]() {
+      std::ostringstream out;
+      out << "[";
+      for (std::size_t i = 0; i < diagnostic_snapshots.size(); ++i) {
+        if (i > 0) {
+          out << ",";
+        }
+        out << decode_timing_snapshot_json(
+            diagnostic_snapshots[i],
+            mlx_quantized_linear_available);
+      }
+      out << "]";
+      return out.str();
+    };
     auto second_fallback_steps_per_token_json = [&]() {
       return fallback_steps_json_for(second_fallback_steps_per_token);
     };
@@ -7551,6 +8858,100 @@ const char* rusty_mlx_fastsmoke_generation_probe_json(
           << "}";
       return out.str();
     };
+    auto attention_head_comparison_json = [](const std::vector<float>& cpu_values,
+                                             const std::vector<float>& mlx_values,
+                                             std::size_t q_heads,
+                                             std::size_t kv_heads,
+                                             std::size_t head_dim) {
+      std::ostringstream out;
+      out << "[";
+      if (q_heads == 0 || kv_heads == 0 || head_dim == 0 || q_heads % kv_heads != 0 ||
+          cpu_values.size() < q_heads * head_dim || mlx_values.size() < q_heads * head_dim) {
+        out << "]";
+        return out.str();
+      }
+      const std::size_t q_heads_per_kv = q_heads / kv_heads;
+      for (std::size_t q_head = 0; q_head < q_heads; ++q_head) {
+        if (q_head > 0) {
+          out << ",";
+        }
+        const std::size_t kv_head = q_head / q_heads_per_kv;
+        double max_diff = 0.0;
+        double cpu_checksum = 0.0;
+        double mlx_checksum = 0.0;
+        std::vector<float> cpu_first;
+        std::vector<float> mlx_first;
+        for (std::size_t i = 0; i < head_dim; ++i) {
+          const std::size_t offset = q_head * head_dim + i;
+          const float cpu = cpu_values[offset];
+          const float mlx = mlx_values[offset];
+          cpu_checksum += static_cast<double>(cpu);
+          mlx_checksum += static_cast<double>(mlx);
+          max_diff = std::max(max_diff, std::abs(static_cast<double>(cpu) - static_cast<double>(mlx)));
+          if (i < 8) {
+            cpu_first.push_back(cpu);
+            mlx_first.push_back(mlx);
+          }
+        }
+        out << "{"
+            << "\"head_index\":" << q_head << ","
+            << "\"kv_head_index\":" << kv_head << ","
+            << "\"cpu_output_checksum\":" << cpu_checksum << ","
+            << "\"mlx_output_checksum\":" << mlx_checksum << ","
+            << "\"max_abs_diff\":" << max_diff << ","
+            << "\"first8_cpu\":" << json_array_float_to_string(cpu_first) << ","
+            << "\"first8_mlx\":" << json_array_float_to_string(mlx_first)
+            << "}";
+      }
+      out << "]";
+      return out.str();
+    };
+    auto attention_head_summary_json = [](const std::vector<float>& cpu_values,
+                                          const std::vector<float>& mlx_values,
+                                          std::size_t q_heads,
+                                          std::size_t kv_heads,
+                                          std::size_t head_dim) {
+      std::size_t worst_head = 0;
+      std::size_t worst_kv_head = 0;
+      std::size_t first_mismatch_index = 0;
+      double worst_diff = 0.0;
+      double overall_diff = vector_max_abs_diff(cpu_values, mlx_values);
+      if (q_heads > 0 && kv_heads > 0 && head_dim > 0 && q_heads % kv_heads == 0 &&
+          cpu_values.size() >= q_heads * head_dim && mlx_values.size() >= q_heads * head_dim) {
+        const std::size_t q_heads_per_kv = q_heads / kv_heads;
+        bool mismatch_recorded = false;
+        for (std::size_t q_head = 0; q_head < q_heads; ++q_head) {
+          double head_diff = 0.0;
+          for (std::size_t i = 0; i < head_dim; ++i) {
+            const std::size_t offset = q_head * head_dim + i;
+            const double diff = std::abs(
+                static_cast<double>(cpu_values[offset]) - static_cast<double>(mlx_values[offset]));
+            if (!mismatch_recorded && diff > 1e-6) {
+              first_mismatch_index = offset;
+              mismatch_recorded = true;
+            }
+            head_diff = std::max(head_diff, diff);
+          }
+          if (head_diff > worst_diff) {
+            worst_diff = head_diff;
+            worst_head = q_head;
+            worst_kv_head = q_head / q_heads_per_kv;
+          }
+        }
+      }
+      std::ostringstream out;
+      out << "{"
+          << "\"overall_max_abs_diff\":" << overall_diff << ","
+          << "\"worst_head\":" << worst_head << ","
+          << "\"worst_kv_head\":" << worst_kv_head << ","
+          << "\"worst_diff\":" << worst_diff << ","
+          << "\"first_mismatch_index\":" << first_mismatch_index << ","
+          << "\"first_mismatch_head\":" << (head_dim == 0 ? 0 : first_mismatch_index / head_dim)
+          << ","
+          << "\"first_mismatch_head_offset\":" << (head_dim == 0 ? 0 : first_mismatch_index % head_dim)
+          << "}";
+      return out.str();
+    };
     std::string layer0_parity_checkpoints_json = "{\"available\":false}";
     try {
       const ResidentLayerGroups& layer0 = resident.layers[0];
@@ -7571,12 +8972,48 @@ const char* rusty_mlx_fastsmoke_generation_probe_json(
       std::vector<float> final_k_after_rope_interleaved;
       std::vector<float> final_v;
       std::vector<float> final_attention;
+      std::vector<float> final_attention_mlx;
+      std::vector<float> final_attention_mlx_grouped;
+      std::vector<float> final_attention_mlx_all_head_batched;
+      std::vector<float> final_attention_mlx_resident_kv;
+      std::vector<float> final_attention_mlx_expanded_resident_kv;
+      std::vector<float> final_attention_mlx_fast;
       std::vector<float> final_o;
       std::vector<float> final_attention_residual;
       std::vector<float> final_post_norm;
       std::vector<float> final_mlp_down;
       std::vector<float> final_residual;
       std::string final_attention_scores_probs = "{}";
+      bool mlx_attention_probe_available = false;
+      double mlx_attention_probe_timing_ms = 0.0;
+      double mlx_attention_probe_max_abs_diff = 0.0;
+      std::string mlx_attention_probe_error;
+      std::size_t mlx_attention_probe_seq_len = 0;
+      std::size_t cpu_attention_seq_len = 0;
+      std::size_t mlx_attention_seq_len = 0;
+      bool cache_appended_before_cpu_attention = false;
+      bool cache_appended_before_mlx_attention = false;
+      double cpu_attention_probe_timing_ms = 0.0;
+      double mlx_grouped_attention_probe_timing_ms = 0.0;
+      double mlx_grouped_attention_probe_max_abs_diff = 0.0;
+      std::string mlx_grouped_attention_probe_error;
+      double mlx_all_head_attention_probe_timing_ms = 0.0;
+      double mlx_all_head_attention_probe_max_abs_diff = 0.0;
+      std::string mlx_all_head_attention_probe_error;
+      double mlx_resident_kv_attention_probe_timing_ms = 0.0;
+      double mlx_resident_kv_attention_probe_max_abs_diff = 0.0;
+      double mlx_resident_kv_final_append_ms = 0.0;
+      std::string mlx_resident_kv_attention_probe_error;
+      double mlx_expanded_resident_kv_attention_probe_timing_ms = 0.0;
+      double mlx_expanded_resident_kv_attention_probe_max_abs_diff = 0.0;
+      double mlx_expanded_resident_kv_final_append_ms = 0.0;
+      std::string mlx_expanded_resident_kv_attention_probe_error;
+      double mlx_fast_attention_probe_timing_ms = 0.0;
+      double mlx_fast_attention_probe_max_abs_diff = 0.0;
+      std::string mlx_fast_attention_probe_error;
+      std::string mlx_attention_worst_head_diagnostic = "{\"available\":false}";
+      MlxResidentKvCacheProbe mlx_layer0_kv_cache_probe;
+      MlxExpandedResidentKvCacheProbe mlx_layer0_expanded_kv_cache_probe;
       for (std::size_t prompt_index = 0; prompt_index < prompt_token_ids.size(); ++prompt_index) {
         std::vector<float> input_values =
             embedding_values_from_record(embedding, static_cast<std::size_t>(prompt_token_ids[prompt_index]));
@@ -7595,8 +9032,159 @@ const char* rusty_mlx_fastsmoke_generation_probe_json(
         apply_active_rope_to_qk(q_values, k_values, static_cast<std::uint64_t>(prompt_index));
         std::string attention_scores_probs =
             attention_scores_probs_head0_json(q_values, debug_cache.layers[0], k_values);
+        CachedAttentionTiming cpu_attention_timing;
+        auto cpu_attention_start = std::chrono::steady_clock::now();
         std::vector<float> attention_values =
-            cached_single_token_attention_values(q_values, debug_cache.layers[0], k_values, v_values);
+            cached_single_token_attention_values(
+                q_values,
+                debug_cache.layers[0],
+                k_values,
+                v_values,
+                &cpu_attention_timing);
+        const double current_cpu_attention_ms = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - cpu_attention_start).count();
+        if (prompt_index + 1 == prompt_token_ids.size()) {
+          mlx_attention_probe_seq_len = debug_cache.layers[0].keys.size() + 1;
+          cpu_attention_seq_len = debug_cache.layers[0].keys.size() + 1;
+          mlx_attention_seq_len = mlx_attention_probe_seq_len;
+          cpu_attention_probe_timing_ms = current_cpu_attention_ms;
+          try {
+            final_attention_mlx = mlx_single_token_attention_values_probe(
+                q_values,
+                debug_cache.layers[0],
+                k_values,
+                v_values,
+                &mlx_attention_probe_timing_ms);
+            mlx_attention_probe_available = true;
+            mlx_attention_probe_max_abs_diff =
+                vector_max_abs_diff(final_attention_mlx, attention_values);
+            mlx_attention_worst_head_diagnostic =
+                mlx_attention_worst_head_diagnostic_json(
+                    q_values,
+                    debug_cache.layers[0],
+                    k_values,
+                    v_values,
+                    8,
+                    2);
+          } catch (const std::exception& e) {
+            mlx_attention_probe_error = e.what();
+          } catch (...) {
+            mlx_attention_probe_error = "unknown_exception";
+          }
+          try {
+            final_attention_mlx_grouped = mlx_grouped_attention_values_probe(
+                q_values,
+                debug_cache.layers[0],
+                k_values,
+                v_values,
+                &mlx_grouped_attention_probe_timing_ms);
+            mlx_grouped_attention_probe_max_abs_diff =
+                vector_max_abs_diff(final_attention_mlx_grouped, attention_values);
+          } catch (const std::exception& e) {
+            mlx_grouped_attention_probe_error = e.what();
+          } catch (...) {
+            mlx_grouped_attention_probe_error = "unknown_exception";
+          }
+          try {
+            final_attention_mlx_all_head_batched = mlx_all_head_batched_attention_values_probe(
+                q_values,
+                debug_cache.layers[0],
+                k_values,
+                v_values,
+                &mlx_all_head_attention_probe_timing_ms);
+            mlx_all_head_attention_probe_max_abs_diff =
+                vector_max_abs_diff(final_attention_mlx_all_head_batched, attention_values);
+          } catch (const std::exception& e) {
+            mlx_all_head_attention_probe_error = e.what();
+          } catch (...) {
+            mlx_all_head_attention_probe_error = "unknown_exception";
+          }
+          try {
+            const double append_before = mlx_layer0_kv_cache_probe.append_ms;
+            mlx_resident_kv_cache_append_probe(
+                mlx_layer0_kv_cache_probe,
+                k_values,
+                v_values,
+                active_rope_config().num_key_value_heads,
+                active_rope_config().head_dim);
+            mlx_resident_kv_final_append_ms = mlx_layer0_kv_cache_probe.append_ms - append_before;
+            final_attention_mlx_resident_kv = mlx_resident_kv_attention_values_probe(
+                q_values,
+                mlx_layer0_kv_cache_probe,
+                active_rope_config().num_attention_heads,
+                active_rope_config().num_key_value_heads,
+                active_rope_config().head_dim,
+                &mlx_resident_kv_attention_probe_timing_ms);
+            mlx_resident_kv_attention_probe_max_abs_diff =
+                vector_max_abs_diff(final_attention_mlx_resident_kv, attention_values);
+          } catch (const std::exception& e) {
+            mlx_resident_kv_attention_probe_error = e.what();
+          } catch (...) {
+            mlx_resident_kv_attention_probe_error = "unknown_exception";
+          }
+          try {
+            const double append_before = mlx_layer0_expanded_kv_cache_probe.append_ms;
+            mlx_expanded_resident_kv_cache_append_probe(
+                mlx_layer0_expanded_kv_cache_probe,
+                k_values,
+                v_values,
+                active_rope_config().num_attention_heads,
+                active_rope_config().num_key_value_heads,
+                active_rope_config().head_dim);
+            mlx_expanded_resident_kv_final_append_ms =
+                mlx_layer0_expanded_kv_cache_probe.append_ms - append_before;
+            final_attention_mlx_expanded_resident_kv =
+                mlx_expanded_resident_kv_attention_values_probe(
+                    q_values,
+                    mlx_layer0_expanded_kv_cache_probe,
+                    active_rope_config().num_attention_heads,
+                    active_rope_config().head_dim,
+                    &mlx_expanded_resident_kv_attention_probe_timing_ms);
+            mlx_expanded_resident_kv_attention_probe_max_abs_diff =
+                vector_max_abs_diff(final_attention_mlx_expanded_resident_kv, attention_values);
+          } catch (const std::exception& e) {
+            mlx_expanded_resident_kv_attention_probe_error = e.what();
+          } catch (...) {
+            mlx_expanded_resident_kv_attention_probe_error = "unknown_exception";
+          }
+          try {
+            final_attention_mlx_fast = mlx_fast_attention_values_probe(
+                q_values,
+                debug_cache.layers[0],
+                k_values,
+                v_values,
+                &mlx_fast_attention_probe_timing_ms);
+            mlx_fast_attention_probe_max_abs_diff =
+                vector_max_abs_diff(final_attention_mlx_fast, attention_values);
+          } catch (const std::exception& e) {
+            mlx_fast_attention_probe_error = e.what();
+          } catch (...) {
+            mlx_fast_attention_probe_error = "unknown_exception";
+          }
+        } else {
+          try {
+            mlx_resident_kv_cache_append_probe(
+                mlx_layer0_kv_cache_probe,
+                k_values,
+                v_values,
+                active_rope_config().num_key_value_heads,
+                active_rope_config().head_dim);
+          } catch (...) {
+            // The resident KV probe is diagnostic only. The CPU cache below
+            // remains the source for parity checkpoints.
+          }
+          try {
+            mlx_expanded_resident_kv_cache_append_probe(
+                mlx_layer0_expanded_kv_cache_probe,
+                k_values,
+                v_values,
+                active_rope_config().num_attention_heads,
+                active_rope_config().num_key_value_heads,
+                active_rope_config().head_dim);
+          } catch (...) {
+            // Diagnostic only.
+          }
+        }
         append_native_kv(&debug_cache, 0, k_values, v_values);
         std::vector<float> o_values = quantized_linear_vector_values_layout_cached(layer0.o_proj, attention_values);
         std::vector<float> attention_residual(input_values.size(), 0.0f);
@@ -7687,6 +9275,216 @@ const char* rusty_mlx_fastsmoke_generation_probe_json(
           << "},"
           << "\"attention_head0\":" << final_attention_scores_probs << ","
           << "\"attention_output\":" << parity_vector_summary_json(final_attention) << ","
+          << "\"mlx_attention_probe\":{"
+          << "\"available\":" << (mlx_attention_probe_available ? "true" : "false") << ","
+          << "\"target_layer\":0,"
+          << "\"backend\":\"metal\","
+          << "\"cpu_attention_seq_len\":" << cpu_attention_seq_len << ","
+          << "\"mlx_attention_seq_len\":" << mlx_attention_seq_len << ","
+          << "\"cache_appended_before_cpu_attention\":"
+          << (cache_appended_before_cpu_attention ? "true" : "false") << ","
+          << "\"cache_appended_before_mlx_attention\":"
+          << (cache_appended_before_mlx_attention ? "true" : "false") << ","
+          << "\"current_position_included_once\":"
+          << ((cpu_attention_seq_len == mlx_attention_seq_len &&
+               !cache_appended_before_cpu_attention &&
+               !cache_appended_before_mlx_attention)
+              ? "true"
+              : "false")
+          << ","
+          << "\"gqa\":{"
+          << "\"num_attention_heads\":" << active_rope_config().num_attention_heads << ","
+          << "\"num_key_value_heads\":" << active_rope_config().num_key_value_heads << ","
+          << "\"head_dim\":" << active_rope_config().head_dim << ","
+          << "\"q_heads_per_kv\":"
+          << (active_rope_config().num_key_value_heads == 0
+              ? 0
+              : active_rope_config().num_attention_heads / active_rope_config().num_key_value_heads)
+          << ","
+          << "\"mapping\":\"kv_head = q_head / q_heads_per_kv\""
+          << "},"
+          << "\"layout\":{"
+          << "\"cpu_k_cache_shape\":["
+          << debug_cache.layers[0].keys.size() << ","
+          << active_rope_config().num_key_value_heads << ","
+          << active_rope_config().head_dim << "],"
+          << "\"cpu_k_cache_layout\":\"positions_outer_then_flat_kv_heads_head_dim\","
+          << "\"mlx_k_array_shape\":["
+          << mlx_attention_probe_seq_len << "," << active_rope_config().head_dim << "],"
+          << "\"cpu_v_cache_shape\":["
+          << debug_cache.layers[0].values.size() << ","
+          << active_rope_config().num_key_value_heads << ","
+          << active_rope_config().head_dim << "],"
+          << "\"cpu_v_cache_layout\":\"positions_outer_then_flat_kv_heads_head_dim\","
+          << "\"mlx_v_array_shape\":["
+          << mlx_attention_probe_seq_len << "," << active_rope_config().head_dim << "],"
+          << "\"attention_score_shape\":[1," << mlx_attention_probe_seq_len << "],"
+          << "\"softmax_axis\":-1,"
+          << "\"value_mix_shape\":[1," << active_rope_config().head_dim << "]"
+          << "},"
+          << "\"variants\":[{"
+          << "\"name\":\"per_head_seq_head_dim_softmax_axis_neg1\","
+          << "\"k_shape\":\"[seq, head_dim]\","
+          << "\"v_shape\":\"[seq, head_dim]\","
+          << "\"score_matmul\":\"[1, head_dim] @ [head_dim, seq]\","
+          << "\"softmax_axis\":-1,"
+          << "\"max_abs_diff\":" << mlx_attention_probe_max_abs_diff << ","
+          << "\"timing_ms\":" << mlx_attention_probe_timing_ms << ","
+          << "\"ran\":true"
+          << "},{"
+          << "\"name\":\"grouped_by_kv_head_q4_seq_head_dim_softmax_axis_neg1\","
+          << "\"q_shape\":\"[q_heads_per_kv, head_dim]\","
+          << "\"k_shape\":\"[seq, head_dim]\","
+          << "\"v_shape\":\"[seq, head_dim]\","
+          << "\"score_shape\":\"[q_heads_per_kv, seq]\","
+          << "\"softmax_axis\":-1,"
+          << "\"max_abs_diff\":" << mlx_grouped_attention_probe_max_abs_diff << ","
+          << "\"timing_ms\":" << mlx_grouped_attention_probe_timing_ms << ","
+          << "\"ran\":" << (final_attention_mlx_grouped.empty() ? "false" : "true") << ","
+          << "\"error\":\"" << json_escape(mlx_grouped_attention_probe_error) << "\""
+          << "},{"
+          << "\"name\":\"all_head_batched_q_heads_seq_head_dim\","
+          << "\"q_shape\":\"[q_heads, 1, head_dim]\","
+          << "\"k_shape\":\"[q_heads, seq, head_dim]\","
+          << "\"v_shape\":\"[q_heads, seq, head_dim]\","
+          << "\"score_shape\":\"[q_heads, 1, seq]\","
+          << "\"softmax_axis\":-1,"
+          << "\"max_abs_diff\":" << mlx_all_head_attention_probe_max_abs_diff << ","
+          << "\"checksum\":" << vector_checksum(final_attention_mlx_all_head_batched) << ","
+          << "\"timing_ms\":" << mlx_all_head_attention_probe_timing_ms << ","
+          << "\"ran\":" << (final_attention_mlx_all_head_batched.empty() ? "false" : "true") << ","
+          << "\"error\":\"" << json_escape(mlx_all_head_attention_probe_error) << "\""
+          << "},{"
+          << "\"name\":\"resident_mlx_kv_all_head_batched\","
+          << "\"available\":" << (final_attention_mlx_resident_kv.empty() ? "false" : "true") << ","
+          << "\"kv_cache_backend\":\"mlx\","
+          << "\"kv_cache_shape\":["
+          << active_rope_config().num_key_value_heads << ","
+          << mlx_layer0_kv_cache_probe.current_len << ","
+          << active_rope_config().head_dim << "],"
+          << "\"append_mode\":\"" << json_escape(mlx_layer0_kv_cache_probe.append_mode) << "\","
+          << "\"q_shape\":\"[q_heads, 1, head_dim]\","
+          << "\"k_take_shape\":\"[q_heads, current_len, head_dim]\","
+          << "\"v_take_shape\":\"[q_heads, current_len, head_dim]\","
+          << "\"max_abs_diff\":" << mlx_resident_kv_attention_probe_max_abs_diff << ","
+          << "\"checksum\":" << vector_checksum(final_attention_mlx_resident_kv) << ","
+          << "\"append_ms\":" << mlx_resident_kv_final_append_ms << ","
+          << "\"attention_ms\":" << mlx_resident_kv_attention_probe_timing_ms << ","
+          << "\"total_ms\":"
+          << (mlx_resident_kv_final_append_ms + mlx_resident_kv_attention_probe_timing_ms) << ","
+          << "\"current_len\":" << mlx_layer0_kv_cache_probe.current_len << ","
+          << "\"ran\":" << (final_attention_mlx_resident_kv.empty() ? "false" : "true") << ","
+          << "\"error\":\"" << json_escape(mlx_resident_kv_attention_probe_error) << "\""
+          << "},{"
+          << "\"name\":\"expanded_q_heads_resident_mlx_kv_all_head_batched\","
+          << "\"available\":" << (final_attention_mlx_expanded_resident_kv.empty() ? "false" : "true") << ","
+          << "\"kv_cache_backend\":\"mlx\","
+          << "\"kv_cache_shape\":["
+          << active_rope_config().num_attention_heads << ","
+          << mlx_layer0_expanded_kv_cache_probe.current_len << ","
+          << active_rope_config().head_dim << "],"
+          << "\"append_mode\":\"" << json_escape(mlx_layer0_expanded_kv_cache_probe.append_mode) << "\","
+          << "\"q_shape\":\"[q_heads, 1, head_dim]\","
+          << "\"k_shape\":\"[q_heads, current_len, head_dim]\","
+          << "\"v_shape\":\"[q_heads, current_len, head_dim]\","
+          << "\"max_abs_diff\":" << mlx_expanded_resident_kv_attention_probe_max_abs_diff << ","
+          << "\"checksum\":" << vector_checksum(final_attention_mlx_expanded_resident_kv) << ","
+          << "\"append_ms\":" << mlx_expanded_resident_kv_final_append_ms << ","
+          << "\"attention_ms\":" << mlx_expanded_resident_kv_attention_probe_timing_ms << ","
+          << "\"total_ms\":"
+          << (mlx_expanded_resident_kv_final_append_ms +
+              mlx_expanded_resident_kv_attention_probe_timing_ms) << ","
+          << "\"current_len\":" << mlx_layer0_expanded_kv_cache_probe.current_len << ","
+          << "\"ran\":" << (final_attention_mlx_expanded_resident_kv.empty() ? "false" : "true") << ","
+          << "\"error\":\"" << json_escape(mlx_expanded_resident_kv_attention_probe_error) << "\","
+          << "\"memory_estimate\":{"
+          << "\"kv_heads_cache_bytes\":"
+          << (active_rope_config().num_key_value_heads *
+              mlx_layer0_expanded_kv_cache_probe.current_len *
+              active_rope_config().head_dim * 2ULL * sizeof(float)) << ","
+          << "\"expanded_q_heads_cache_bytes\":"
+          << (active_rope_config().num_attention_heads *
+              mlx_layer0_expanded_kv_cache_probe.current_len *
+              active_rope_config().head_dim * 2ULL * sizeof(float)) << ","
+          << "\"expansion_factor\":"
+          << (active_rope_config().num_key_value_heads == 0
+              ? 0
+              : static_cast<double>(active_rope_config().num_attention_heads) /
+                    static_cast<double>(active_rope_config().num_key_value_heads))
+          << "}"
+          << "},{"
+          << "\"name\":\"mlx_fast_scaled_dot_product_attention\","
+          << "\"available\":" << (final_attention_mlx_fast.empty() ? "false" : "true") << ","
+          << "\"q_shape\":\"[1, q_heads, 1, head_dim]\","
+          << "\"k_shape\":\"[1, q_heads, seq, head_dim]\","
+          << "\"v_shape\":\"[1, q_heads, seq, head_dim]\","
+          << "\"max_abs_diff\":" << mlx_fast_attention_probe_max_abs_diff << ","
+          << "\"checksum\":" << vector_checksum(final_attention_mlx_fast) << ","
+          << "\"timing_ms\":" << mlx_fast_attention_probe_timing_ms << ","
+          << "\"ran\":" << (final_attention_mlx_fast.empty() ? "false" : "true") << ","
+          << "\"error\":\"" << json_escape(mlx_fast_attention_probe_error) << "\""
+          << "}],"
+          << "\"best_variant\":\""
+          << (mlx_grouped_attention_probe_max_abs_diff <= mlx_attention_probe_max_abs_diff
+              ? "grouped_by_kv_head_q4_seq_head_dim_softmax_axis_neg1"
+              : "per_head_seq_head_dim_softmax_axis_neg1")
+          << "\","
+          << "\"timing_comparison_ms\":{"
+          << "\"cpu_layer0\":" << cpu_attention_probe_timing_ms << ","
+          << "\"old_per_head_mlx_layer0\":" << mlx_attention_probe_timing_ms << ","
+          << "\"grouped_by_kv_head_mlx_layer0\":" << mlx_grouped_attention_probe_timing_ms << ","
+          << "\"all_head_batched_mlx_layer0\":" << mlx_all_head_attention_probe_timing_ms << ","
+          << "\"resident_mlx_kv_append_layer0\":" << mlx_resident_kv_final_append_ms << ","
+          << "\"resident_mlx_kv_attention_layer0\":" << mlx_resident_kv_attention_probe_timing_ms << ","
+          << "\"resident_mlx_kv_total_layer0\":"
+          << (mlx_resident_kv_final_append_ms + mlx_resident_kv_attention_probe_timing_ms) << ","
+          << "\"expanded_q_heads_resident_mlx_kv_append_layer0\":"
+          << mlx_expanded_resident_kv_final_append_ms << ","
+          << "\"expanded_q_heads_resident_mlx_kv_attention_layer0\":"
+          << mlx_expanded_resident_kv_attention_probe_timing_ms << ","
+          << "\"expanded_q_heads_resident_mlx_kv_total_layer0\":"
+          << (mlx_expanded_resident_kv_final_append_ms +
+              mlx_expanded_resident_kv_attention_probe_timing_ms) << ","
+          << "\"native_fast_attention_mlx_layer0\":" << mlx_fast_attention_probe_timing_ms
+          << "},"
+          << "\"grouped_probe\":{"
+          << "\"available\":" << (final_attention_mlx_grouped.empty() ? "false" : "true") << ","
+          << "\"checksum_mlx_grouped\":" << vector_checksum(final_attention_mlx_grouped) << ","
+          << "\"max_abs_diff\":" << mlx_grouped_attention_probe_max_abs_diff << ","
+          << "\"worst_summary\":"
+          << attention_head_summary_json(
+                 final_attention,
+                 final_attention_mlx_grouped,
+                 active_rope_config().num_attention_heads,
+                 active_rope_config().num_key_value_heads,
+                 active_rope_config().head_dim)
+          << "},"
+          << "\"per_head_comparison\":"
+          << attention_head_comparison_json(
+                 final_attention,
+                 final_attention_mlx,
+                 active_rope_config().num_attention_heads,
+                 active_rope_config().num_key_value_heads,
+                 active_rope_config().head_dim)
+          << ","
+          << "\"per_head_max_abs_diff_summary\":"
+          << attention_head_summary_json(
+                 final_attention,
+                 final_attention_mlx,
+                 active_rope_config().num_attention_heads,
+                 active_rope_config().num_key_value_heads,
+                 active_rope_config().head_dim)
+          << ","
+          << "\"worst_head_diagnostic\":" << mlx_attention_worst_head_diagnostic << ","
+          << "\"shape\":[1," << final_attention.size() << "],"
+          << "\"checksum_cpu\":" << vector_checksum(final_attention) << ","
+          << "\"checksum_mlx\":" << vector_checksum(final_attention_mlx) << ","
+          << "\"max_abs_diff\":" << mlx_attention_probe_max_abs_diff << ","
+          << "\"timing_ms\":" << mlx_attention_probe_timing_ms << ","
+          << "\"first_values_cpu\":" << json_array_float_to_string(first_values_of(final_attention)) << ","
+          << "\"first_values_mlx\":" << json_array_float_to_string(first_values_of(final_attention_mlx)) << ","
+          << "\"error\":\"" << json_escape(mlx_attention_probe_error) << "\""
+          << "},"
           << "\"o_proj_output\":" << parity_vector_summary_json(final_o) << ","
           << "\"post_attention_residual\":" << parity_vector_summary_json(final_attention_residual) << ","
           << "\"post_attention_rmsnorm\":" << parity_vector_summary_json(final_post_norm) << ","
@@ -7739,6 +9537,7 @@ const char* rusty_mlx_fastsmoke_generation_probe_json(
              << "\"prompt_readback_reasons\":[\"qkv_for_cpu_attention\"],"
              << "\"prompt_fallback_steps\":" << json_array_string_to_string(prompt_fallback_steps) << ","
              << "\"per_token_incremental_ms\":" << json_array_double_to_string(per_token_incremental_ms) << ","
+             << "\"long_decode_diagnostic_snapshots\":" << diagnostic_snapshots_json() << ","
              << "\"total_generation_ms\":" << total_generation_ms << ","
              << "\"generation_1_total_ms\":" << total_generation_ms << ","
              << "\"generation_2_prompt_pass_ms\":" << second_prompt_pass_ms << ","
@@ -7823,6 +9622,45 @@ const char* rusty_mlx_fastsmoke_generation_probe_json(
                     mlx_quantized_linear_available,
                     fallback_steps_per_token.empty() ? std::vector<std::string>{} : fallback_steps_per_token.back()) << ","
              << "\"last_token_timing_buckets_ms\":" << resident_decode_timing_buckets_json(last_incremental_result) << ","
+             << "\"last_token_attention_backends_per_layer\":"
+             << attention_backends_json(last_incremental_result) << ","
+             << "\"experimental_mlx_attention_enabled\":"
+             << (experimental_mlx_attention() ? "true" : "false") << ","
+             << "\"experimental_mlx_attention_mode\":\""
+             << json_escape(experimental_mlx_attention_mode()) << "\","
+             << "\"attention_backend_default\":\"expanded_kv\","
+             << "\"attention_backend_active\":\""
+             << (experimental_mlx_attention_mode() == "0" ? "cpu" : json_escape(experimental_mlx_attention_mode()))
+             << "\","
+             << "\"expanded_kv_cache\":{"
+             << "\"enabled\":"
+             << (experimental_mlx_attention_mode() == "expanded_kv" ? "true" : "false") << ","
+             << "\"backend\":\""
+             << (experimental_mlx_attention_mode() == "expanded_kv" ? "mlx_expanded_q_heads" : "disabled")
+             << "\","
+             << "\"layout\":\"[layers,q_heads,max_seq,head_dim]\","
+             << "\"append_strategy\":\"preallocated_slice_update\","
+             << "\"concat_used\":false,"
+             << "\"layers\":" << layers << ","
+             << "\"q_heads\":" << active_rope_config().num_attention_heads << ","
+             << "\"kv_heads\":" << active_rope_config().num_key_value_heads << ","
+             << "\"head_dim\":" << active_rope_config().head_dim << ","
+             << "\"max_seq\":" << kv_cache.max_seq << ","
+             << "\"bytes_per_layer\":"
+             << (active_rope_config().num_attention_heads *
+                 kv_cache.max_seq *
+                 active_rope_config().head_dim * 2ULL * sizeof(float)) << ","
+             << "\"total_bytes\":"
+             << (layers *
+                 active_rope_config().num_attention_heads *
+                 kv_cache.max_seq *
+                 active_rope_config().head_dim * 2ULL * sizeof(float)) << ","
+             << "\"expansion_factor\":"
+             << (active_rope_config().num_key_value_heads == 0
+                    ? 0.0
+                    : static_cast<double>(active_rope_config().num_attention_heads) /
+                          static_cast<double>(active_rope_config().num_key_value_heads))
+             << "},"
              << "\"last_token_projection_timing_breakdown_ms\":" << projection_timing_breakdown_json(last_incremental_result) << ","
              << "\"resident_groups_persistent_across_probe\":false,"
              << "\"provisional\":true"

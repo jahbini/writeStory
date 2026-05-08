@@ -922,6 +922,11 @@ async function main() {
         fastGenerationProbe.value?.last_token_backend_report?.gate_up?.up_backend !== 'metal' ||
         fastGenerationProbe.value?.last_token_backend_report?.down?.backend !== 'metal' ||
         fastGenerationProbe.value?.last_token_backend_report?.['logits/top1']?.backend !== 'metal' ||
+        fastGenerationProbe.value?.attention_backend_default !== 'expanded_kv' ||
+        fastGenerationProbe.value?.attention_backend_active !== 'expanded_kv' ||
+        fastGenerationProbe.value?.expanded_kv_cache?.enabled !== true ||
+        fastGenerationProbe.value?.expanded_kv_cache?.concat_used !== false ||
+        fastGenerationProbe.value?.last_token_backend_report?.attention?.backend !== 'mlx_expanded_kv' ||
         !Number.isFinite(fastGenerationProbe.value?.first_generated_final_norm_checksum) ||
         fastGenerationProbe.value?.logits_len !== 151936
       ) {
@@ -1033,6 +1038,9 @@ async function main() {
           first_generated_final_norm_checksum: fastGenerationProbe.value.first_generated_final_norm_checksum,
           final_norm_checksum: fastGenerationProbe.value.final_norm_checksum,
           last_token_backend_report: fastGenerationProbe.value.last_token_backend_report,
+          attention_backend_default: fastGenerationProbe.value.attention_backend_default,
+          attention_backend_active: fastGenerationProbe.value.attention_backend_active,
+          expanded_kv_cache: fastGenerationProbe.value.expanded_kv_cache,
           last_token_timing_buckets_ms: fastGenerationProbe.value.last_token_timing_buckets_ms,
           last_token_projection_timing_breakdown_ms: fastGenerationProbe.value.last_token_projection_timing_breakdown_ms,
           handle_counts_before: handleCountsBeforeFastDecode.value,
