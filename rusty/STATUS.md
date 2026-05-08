@@ -1,57 +1,84 @@
 # Rusty Status
 
-Date: 2026-05-06
+Date: 2026-05-08
 
 Branch: `rusty`
 
 ## Current State
 
 - The Rust resident bridge scaffold exists under `rusty/bridge/`.
-- The bridge has a JSONL protocol, handle tables, shutdown-state validation, and backend discovery commands.
-- The native C++ shim exists and Rust can call into it.
-- The shim can link to MLX successfully.
-- A small native smoke harness exists under `rusty/native_smoke/`.
-- The smoke harness compares several compiler/runtime variants against the selected Homebrew MLX root.
+- The bridge uses a JSONL protocol, handle tables, shutdown-state validation,
+  and backend discovery commands.
+- The native C++ shim exists, Rust can call into it, and the shim can link to
+  the selected Homebrew MLX install.
+- `verify_bridge.coffee` is the active verifier. `verify_bridge.mjs` is no
+  longer the verifier entrypoint.
+- The default verifier profile is `smoke`.
+- The standard human validation command is:
+  - `RUSTY_RUN_MLX_RUNTIME=1 make -C rusty verify >rusty.log 2>rusty.err`
 
-## What We Learned
+## Current Smoke Source Of Truth
 
-- Plain C++ MLX array construction fails on this machine even when built directly against the coherent Homebrew MLX install.
-- The failure is reproducible in the Rust bridge shim, in standalone C++ smoke tests, and in the official repo `.venv` Python interpreter.
-- The failure happens at array construction and throws an `NSRangeException` / `unknown exception` path inside `libmlx.dylib`.
-- Changing `-std=c++17`, `-std=c++20`, or adding `-stdlib=libc++` does not change the failure.
-- Switching between `/opt/homebrew/Cellar/mlx/0.30.0` and `/opt/homebrew/opt/mlx` does not change the failure.
-- The local `../development/mlx` tree has headers and `MLXConfig.cmake`, but no built `libmlx.dylib` in the obvious `build/` path, so it is not a usable runtime target yet.
+- `session_layer_residency_probe` is the promoted source-of-truth generation
+  path for smoke.
+- Smoke keeps all 36 Qwen3 model4 layer groups resident in the native session.
+- Smoke performs one prompt/prefill pass and one resident incremental decode
+  pass.
+- Smoke reuses the resident result for downstream verifier sections instead of
+  rerunning full-stack generation.
+- The latest passing smoke verifier produced:
+  - generated token id: `24`
+  - decoded token: `9`
+  - final norm checksum: `130.289`
+  - clean native handle counts before and after probes
 
-## Conclusion
+## Current Arithmetic State
 
-- The current blocker is MLX runtime behavior on this machine, not Rust bridge linkage.
-- The bridge architecture remains sound: JS orchestration, Rust process ownership, C++ shim for MLX boundary.
+- The quantized layout is still CPU/provisional, not production inference.
+- Active promoted decode flags:
+  - optimized row-block quantized linear
+  - cached quantized layout metadata
+  - paired MLP gate/up projection
+  - tied-embedding top-1 logits projection
+- Scalar quantized linear remains available as a fallback.
+- The largest remaining smoke timing bucket is:
+  - `gate_up_paired_projection`, roughly `6900 ms`
+- Correct but not promoted:
+  - `down_full_block_optimized_path`
+  - `gate_up_full_block_optimized_path`
+- Both full-block variants matched token/text/checksum, but did not improve
+  timing.
+
+## Verifier Profile Rule
+
+- Smoke/default verifier must not repeatedly execute proven expensive baseline
+  paths just to compare timings.
+- Record known baseline timing/result metadata.
+- Re-run old-vs-new expensive comparisons only when:
+  - an explicit full/comparison profile is selected, or
+  - the math contract changes.
+
+## Boundary Rules
+
+- CoffeeScript/JavaScript owns orchestration only.
+- Rust/C++ owns tensors, model residency, KV cache, MLX/Metal memory, and native
+  lifetimes.
+- CoffeeScript may only see opaque handles and structured scalar metadata.
+- No tensor payloads may escape the C++ shim.
+- `node-mlx` is a reference map, not a runtime ownership model.
+
+## Current Limitations
+
+- No production generation wiring.
+- No KV-cache optimized attention kernel beyond verifier scaffolding.
+- No Metal-native quantized matmul path yet.
+- The full model math remains verifier-only and CPU/provisional.
+- Smoke is intentionally narrow and dependency-aware.
 
 ## Recommended Next Step
 
-- Decide whether to keep diagnosing the local MLX runtime path, or move to a newer MLX build/runtime combination and repeat the smoke matrix.
-
-## Prompt For ChatGPT
-
-Use this prompt if you want a clean continuation:
-
-```text
-I have a Rust resident bridge scaffold under rusty/ and the native MLX diagnosis is complete for now.
-
-Current facts:
-- Rust can build and call a tiny C++ shim.
-- The shim can link MLX successfully.
-- backend_probe, shim_probe, mlx_link_probe, and mlx_runtime_diagnose are all in place.
-- The native smoke test under rusty/native_smoke compares C++17, C++20, libc++, Homebrew cellar root, Homebrew opt symlink, Python venv, and local-repo variants.
-- Every tiny MLX array construction path fails on this machine with the same NSRangeException / unknown exception inside libmlx.dylib.
-- The failure reproduces in:
-  - Rust bridge shim
-  - standalone C++ smoke test
-  - the repo .venv Python interpreter
-- So the blocker is MLX runtime behavior on this machine, not Rust linkage.
-
-What I want next:
-- either keep diagnosing the local MLX runtime path
-- or pivot to a newer MLX version/build and rerun the smoke matrix
-- do not change the bridge architecture unless the evidence supports it
-```
+- Continue optimizing quantized linear arithmetic, but avoid full-block tail
+  removal as a speed lever; recent probes showed it is correct but slower.
+- The next useful target is a real gate/up paired projection optimization, such
+  as memory traversal, scale/bias handling, or native/parallel execution.
+- Keep smoke to one active generation source plus one focused comparison probe.

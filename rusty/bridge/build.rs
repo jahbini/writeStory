@@ -60,7 +60,11 @@ fn explicit_choice() -> Result<Option<InstallChoice>, String> {
             }
             let metallib = {
                 let candidate = lib_dir.join("mlx.metallib");
-                if candidate.exists() { Some(candidate) } else { None }
+                if candidate.exists() {
+                    Some(candidate)
+                } else {
+                    None
+                }
             };
             Ok(Some(InstallChoice {
                 root: include_root,
@@ -133,7 +137,11 @@ fn python_choice() -> Option<InstallChoice> {
         if include_dir.join("mlx/device.h").exists() && dylib.exists() {
             let metallib = {
                 let candidate = lib_dir.join("mlx.metallib");
-                if candidate.exists() { Some(candidate) } else { None }
+                if candidate.exists() {
+                    Some(candidate)
+                } else {
+                    None
+                }
             };
             return Some(InstallChoice {
                 root,
@@ -186,22 +194,24 @@ fn main() {
         .as_ref()
         .map(|choice| choice.root.display().to_string())
         .unwrap_or_default();
-    let include_dir = selected
-        .as_ref()
-        .map(|choice| choice.include_dir.clone());
+    let include_dir = selected.as_ref().map(|choice| choice.include_dir.clone());
     let lib_dir = selected.as_ref().map(|choice| choice.lib_dir.clone());
     let source = selected
         .as_ref()
         .map(|choice| choice.source)
         .unwrap_or("none");
 
-    println!("cargo:warning=rusty selected MLX root: {}", if selected_root.is_empty() { "<none>" } else { &selected_root });
+    println!(
+        "cargo:warning=rusty selected MLX root: {}",
+        if selected_root.is_empty() {
+            "<none>"
+        } else {
+            &selected_root
+        }
+    );
     println!(
         "cargo:warning=rusty selected MLX include dir: {}",
-        include_dir
-            .as_deref()
-            .unwrap_or(Path::new(""))
-            .display()
+        include_dir.as_deref().unwrap_or(Path::new("")).display()
     );
     println!(
         "cargo:warning=rusty selected MLX lib dir: {}",
@@ -218,15 +228,15 @@ fn main() {
         println!("cargo:warning=rusty no coherent MLX installation selected");
     }
 
-    println!("cargo:rustc-env=RUSTY_MLX_LINK_ENABLED={}", if mlx_enabled { "1" } else { "0" });
+    println!(
+        "cargo:rustc-env=RUSTY_MLX_LINK_ENABLED={}",
+        if mlx_enabled { "1" } else { "0" }
+    );
     println!("cargo:rustc-env=RUSTY_MLX_SELECTED_ROOT={selected_root}");
     println!("cargo:rustc-env=RUSTY_MLX_SELECTION_SOURCE={source}");
     println!(
         "cargo:rustc-env=RUSTY_MLX_INCLUDE_DIR={}",
-        include_dir
-            .as_deref()
-            .unwrap_or(Path::new(""))
-            .display()
+        include_dir.as_deref().unwrap_or(Path::new("")).display()
     );
     println!(
         "cargo:rustc-env=RUSTY_MLX_LIB_DIR={}",
@@ -258,8 +268,14 @@ fn main() {
     println!("cargo:rustc-link-lib=static=mlx_shim");
     println!("cargo:rustc-link-lib=dylib=c++");
     if let Some(lib_dir) = &lib_dir {
-        println!("cargo:rustc-link-search=native={}", canonical(lib_dir).display());
+        println!(
+            "cargo:rustc-link-search=native={}",
+            canonical(lib_dir).display()
+        );
         println!("cargo:rustc-link-lib=dylib=mlx");
-        println!("cargo:rustc-link-arg=-Wl,-rpath,{}", canonical(lib_dir).display());
+        println!(
+            "cargo:rustc-link-arg=-Wl,-rpath,{}",
+            canonical(lib_dir).display()
+        );
     }
 }

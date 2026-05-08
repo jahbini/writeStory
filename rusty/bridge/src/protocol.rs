@@ -59,11 +59,7 @@ impl Response {
         }
     }
 
-    pub fn err(
-        id: impl Into<String>,
-        code: impl Into<String>,
-        message: impl Into<String>,
-    ) -> Self {
+    pub fn err(id: impl Into<String>, code: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
             id: id.into(),
             ok: false,

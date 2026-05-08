@@ -160,7 +160,10 @@ fn collect_candidate_header_files() -> Vec<String> {
         }
     }
 
-    for base in [PathBuf::from("/opt/homebrew/include"), PathBuf::from("/usr/local/include")] {
+    for base in [
+        PathBuf::from("/opt/homebrew/include"),
+        PathBuf::from("/usr/local/include"),
+    ] {
         for rel in ["mlx/mlx.h", "mlx/array.h", "mlx/ops.h"] {
             push_if_exists(&mut files, base.join(rel));
         }
@@ -168,7 +171,14 @@ fn collect_candidate_header_files() -> Vec<String> {
 
     if let Some(val) = env::var_os("MLX_INCLUDE_DIR") {
         let base = PathBuf::from(val);
-        for rel in ["mlx.h", "array.h", "ops.h", "mlx/mlx.h", "mlx/array.h", "mlx/ops.h"] {
+        for rel in [
+            "mlx.h",
+            "array.h",
+            "ops.h",
+            "mlx/mlx.h",
+            "mlx/array.h",
+            "mlx/ops.h",
+        ] {
             push_if_exists(&mut files, base.join(rel));
         }
     }
@@ -198,7 +208,10 @@ fn collect_candidate_library_files() -> Vec<String> {
         }
     }
 
-    for base in [PathBuf::from("/opt/homebrew/lib"), PathBuf::from("/usr/local/lib")] {
+    for base in [
+        PathBuf::from("/opt/homebrew/lib"),
+        PathBuf::from("/usr/local/lib"),
+    ] {
         for rel in ["libmlx.dylib", "libmlx.so", "libmlx.a"] {
             push_if_exists(&mut files, base.join(rel));
         }
@@ -425,7 +438,10 @@ fn select_preferred_installation(groups: &[Value]) -> (Option<String>, Vec<Strin
         notes.push("preferred local source/build repo pair".to_string());
         return (Some(root), notes);
     }
-    if let Some(root) = group_root(|root| root.contains("/Cellar/mlx/") || root == "/opt/homebrew", true) {
+    if let Some(root) = group_root(
+        |root| root.contains("/Cellar/mlx/") || root == "/opt/homebrew",
+        true,
+    ) {
         notes.push("preferred coherent Homebrew install".to_string());
         return (Some(root), notes);
     }
@@ -484,7 +500,10 @@ fn header_evidence(include_paths: &[String]) -> (bool, bool, Vec<String>) {
             let candidate = base_path.join(relative);
             if candidate.exists() {
                 c_api_detected = true;
-                evidence.push(format!("C API candidate: {}", canonical_display(&candidate)));
+                evidence.push(format!(
+                    "C API candidate: {}",
+                    canonical_display(&candidate)
+                ));
             }
         }
     }
@@ -512,7 +531,10 @@ fn library_evidence(library_paths: &[String]) -> Vec<String> {
         for relative in library_patterns {
             let candidate = base_path.join(relative);
             if candidate.exists() {
-                evidence.push(format!("library candidate: {}", canonical_display(&candidate)));
+                evidence.push(format!(
+                    "library candidate: {}",
+                    canonical_display(&candidate)
+                ));
             }
         }
     }
@@ -530,7 +552,10 @@ fn python_evidence(python_paths: &[String]) -> (bool, Vec<String>) {
         let path = Path::new(base);
         if path.exists() {
             detected = true;
-            evidence.push(format!("python package candidate: {}", canonical_display(path)));
+            evidence.push(format!(
+                "python package candidate: {}",
+                canonical_display(path)
+            ));
         }
     }
 
@@ -607,7 +632,10 @@ pub fn run_probe() -> Value {
         ));
     }
     if let Some(mlx_home) = env::var_os("MLX_HOME") {
-        notes.push(format!("environment hint: MLX_HOME={}", mlx_home.to_string_lossy()));
+        notes.push(format!(
+            "environment hint: MLX_HOME={}",
+            mlx_home.to_string_lossy()
+        ));
     }
     if !mlx_detected {
         notes.push("no obvious local MLX include/library/package paths detected".to_string());

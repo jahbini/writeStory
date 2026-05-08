@@ -73,7 +73,13 @@ fn main() {
         let shutdown_requested = request.cmd == "bridge_shutdown";
         let (reply_tx, reply_rx) = mpsc::channel();
 
-        if work_tx.send(WorkItem { request, reply_to: reply_tx }).is_err() {
+        if work_tx
+            .send(WorkItem {
+                request,
+                reply_to: reply_tx,
+            })
+            .is_err()
+        {
             let response = Response::err(
                 "unknown",
                 "bridge_unavailable",

@@ -1,6 +1,7 @@
 # vi
 *.swp
-[12].log
+*.log
+*.err
 *.tar
 *.tgz
 
@@ -23,6 +24,8 @@ __pycache__/
 .venv/
 .env
 env/
+test/
+test.sh
 
 # Jupyter
 .ipynb_checkpoints/

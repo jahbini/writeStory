@@ -85,7 +85,7 @@ Do not borrow:
   - optional MLX compile/link probe through that shim
   - clean startup/shutdown
   - async dispatch skeleton
-  - stubbed commands only
+  - verifier-only native model, tensor-group, KV-cache, and arithmetic probes
 - `meta/mlx_bridge.coffee`
   - CoffeeScript wrapper skeleton for a resident bridge process
   - designed to fit existing Memo semantics
@@ -100,63 +100,110 @@ Do not borrow:
     `out/rusty_story.txt`
 - `examples/session_transcript.jsonl`
   - example request/response flow for a single stub session
-- `verify_bridge.mjs`
-  - minimal local verifier for the stub bridge
+- `verify_bridge.coffee`
+  - CoffeeScript verifier with `smoke`, `layer`, `full`, and `generate`
+    profiles
 - `Makefile`
   - `make verify` runs the local verifier
 
 ## What is intentionally not implemented yet
 
-- actual MLX inference
-- actual tokenizer/model loading
-- actual Metal / MLX ownership
+- production generation wiring
+- optimized KV-cache attention
+- Metal-native quantized matmul
 - Unix socket transport
 - production integration into the main pipeline
-- real ML backend calls beyond lightweight environment probing
+- JavaScript-visible tensor/model ownership
 
 ## Current bridge status
 
-- the current bridge is stubbed
-- JavaScript owns only opaque handles
-- Rust currently mocks ML-side objects and lifetime tables
-- Rust can probe local MLX/backend candidate paths without loading models
-- Rust can now build and call a tiny native C++ shim without invoking MLX
-- Rust can now attempt a minimal MLX include/link probe without loading models
-- Rust can now exercise a tiny native MLX object handle lifecycle entirely inside the shim
-- Rust can now diagnose MLX runtime failure stage and exception text without exposing tensors
-- live integration into production meta is intentionally deferred
-- handle lifecycle validation is active in the stub:
-  - unknown handles fail
-  - freed handles fail
-  - handles remain opaque strings
-- shutdown-state validation is active in the stub:
-  - shutdown is accepted explicitly
-  - health may still report `shutting_down`
-  - non-health commands are rejected after shutdown starts
+- `verify_bridge.coffee` is the active verifier. `verify_bridge.mjs` is not the
+  verifier entrypoint.
+- The default verifier profile is `smoke`.
+- JavaScript/CoffeeScript owns orchestration and sees only opaque handles plus
+  scalar metadata.
+- Rust/C++ owns tensors, model residency, KV cache structures, MLX/Metal
+  lifetimes, and native handle cleanup.
+- The native bridge can inspect Qwen3 model4 config and safetensors
+  descriptors, create model descriptors, load selected tensor groups, and
+  perform verifier-only CPU/provisional quantized arithmetic.
+- Smoke keeps all 36 Qwen3 model4 layer groups resident in the native session.
+- `session_layer_residency_probe` is the promoted smoke source-of-truth
+  generation path.
+- The latest passing smoke source-of-truth result:
+  - generated token id: `24`
+  - decoded token: `9`
+  - final norm checksum: `130.289`
+  - clean native handle counts before and after probes
+- Active promoted decode flags:
+  - optimized row-block quantized linear
+  - cached quantized layout metadata
+  - paired MLP gate/up projection
+  - tied-embedding top-1 logits projection
+- Scalar quantized linear remains available as fallback.
+- Correct but not promoted:
+  - `down_full_block_optimized_path`
+  - `gate_up_full_block_optimized_path`
+- Both full-block variants matched token/text/checksum but were slower.
 
 ## Verification
 
-If `cargo` exists locally:
+Standard human validation command:
 
-- `make -C rusty verify`
-- `make -C rusty test-meta`
+- `RUSTY_RUN_MLX_RUNTIME=1 make -C rusty verify >rusty.log 2>rusty.err`
 
-What it does:
+The default profile is `smoke`. Smoke is dependency-aware and must not rerun
+proven expensive full-stack or generation baselines just to compare timings.
+Recorded baseline result/timing metadata should be reused unless an explicit
+full/comparison profile is selected or a math contract changes.
 
-- builds the Rust bridge
-- runs `bridge_health`
-- runs `backend_probe` and prints the returned structure
-- runs `shim_probe` and prints the shim version
-- runs `mlx_link_probe` and prints whether MLX linkage is available
-- creates, sums, and frees a tiny native MLX test object by opaque handle
-- runs `load_model` with a fake path
-- runs `create_session` using the returned opaque model handle
-- runs `generate` with prompt `hello`
-- verifies `ok: true` responses
-- runs `bridge_shutdown`
+Smoke runs:
 
-If `cargo` is not installed, the verifier exits cleanly and reports that it
-skipped the build/run.
+- backend and MLX discovery
+- model4 load plan and descriptor checks
+- tokenizer fixture load/encode/decode
+- one quantized slice/layout path
+- one RMSNorm primitive
+- one minimal MLX runtime array test when `RUSTY_RUN_MLX_RUNTIME=1`
+- one promoted resident full-stack/incremental generation source via
+  `session_layer_residency_probe`
+- one focused comparison probe for the current development target
+- native handle-count checks before and after probes
+
+MLX runtime tests must be run from a normal user terminal with Metal/IOKit
+access, not from Codex.
+
+Other profiles may enable older expensive probes, including layer-stack,
+multi-token greedy, prompt-session, and incremental comparison sections.
+
+## Completed verifier milestones
+
+- descriptor creation from config and safetensors metadata
+- embedding and tensor-group loading with clean freed-handle behavior
+- quantization layout and tiny dequantization probes
+- q_proj quantized linear slice/row/fullrow/vector probes
+- RMSNorm primitive
+- layer-0 attention, MLP, and consolidated block probes
+- N-layer and full-stack single-token probes
+- greedy next-token and prompt-session verifier probes
+- structural native KV-cache storage
+- incremental-attention verifier scaffolding
+- resident all-layer group loading for native sessions
+- optimized row-block quantized linear
+- cached group layout metadata
+- paired MLP gate/up projection
+- tied-embedding top-1 logits projection
+
+## Current optimization frontier
+
+- The full model math remains verifier-only and CPU/provisional.
+- The largest current smoke timing bucket is `gate_up_paired_projection`,
+  roughly `6900 ms`.
+- Recent full-block variants for `down_proj` and gate/up were correct but
+  slower, so they remain disabled.
+- The next useful speed lever is real gate/up paired projection work:
+  traversal, scale/bias access, native parallelism, or a Metal/native
+  quantized matmul path.
 
 `test-meta`:
 
@@ -193,8 +240,11 @@ Rust, with Node/CoffeeScript staying as the orchestrator.
 
 ## TODO: next real milestone
 
-- locate the MLX C/C++ callable boundary
-- decide whether Rust links directly to a C API or wraps a C++ shim
-- implement tokenizer loading
-- implement real `load_model`
-- implement real `generate` without exposing tensors to JS
+- keep smoke dependency-aware and avoid rerunning proven expensive baselines
+- optimize the current largest arithmetic bucket:
+  `gate_up_paired_projection`
+- preserve token `24`, decoded text `9`, checksum `130.289`, and clean handle
+  counts while optimizing
+- keep scalar/current optimized quantized linear paths available as fallback
+- move production generation wiring only after verifier-only arithmetic and
+  residency contracts are stable

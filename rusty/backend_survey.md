@@ -137,6 +137,181 @@ Python comparison:
 - the exception was an `NSRangeException` from MLX Metal device construction
 - this means Python MLX is not a clean working baseline on this machine either
 
+Runtime policy:
+
+- the native MLX object-handle runtime test succeeded from a normal terminal
+- observed result:
+  - `mlx_create_test_array handle: 2`
+  - `mlx_test_array_sum sum: 7`
+- this proves the boundary layering we want:
+  - CoffeeScript sees only command/result data
+  - Rust routes JSONL commands
+  - the C++ shim owns MLX objects
+  - MLX/Metal owns device memory
+  - no MLX tensor escapes into Rust or CoffeeScript
+- Codex/sandbox may fail because Metal device enumeration can return no devices
+- therefore the runtime probe must remain gated behind:
+  - `RUSTY_RUN_MLX_RUNTIME=1`
+- the default verifier should not run MLX object allocation tests unless that
+  env var is set
+- build/link probes remain safe by default
+
+This is the transition from probe phase to real resource lifecycle phase.
+The next native milestone is actual tokenizer parsing and model weight loading,
+still without exposing tensors or model objects to Rust or CoffeeScript.
+
+Resource lifecycle shell:
+
+- `load_tokenizer` / `unload_tokenizer` create and free tokenizer handles only
+- `load_tokenizer` now grounds the handle in real tokenizer files on disk and
+  records:
+  - `path`
+  - `detected_files`
+  - `tokenizer_kind`
+- for `tokenizer.json` files, the bridge now also records lightweight
+  HuggingFace metadata only:
+  - `model_type`
+  - `normalizer_type`
+  - `pre_tokenizer_type`
+  - `decoder_type`
+  - `vocab_size`
+  - `merges_count`
+  - `added_tokens_count`
+- fixture-only `tokenizer_encode` and `tokenizer_decode` now prove the command
+  shape and handle ownership path using exact vocab lookup from
+  `tokenizer.json`; this is not yet real tokenizer compatibility
+- when `RUSTY_RUN_MLX_RUNTIME=1`, encoded token IDs can be promoted to a native
+  MLX token-array handle inside the C++ shim, with metadata-only inspection and
+  clean free behavior
+- when `RUSTY_RUN_MLX_RUNTIME=1`, `native_mock_forward` proves a live session
+  can consume a token-array handle and return a logits-like MLX array handle,
+  again with opaque ownership only
+- when `RUSTY_RUN_MLX_RUNTIME=1`, `native_mock_sample` reads the logits-like
+  array inside the shim and returns a plain token id, completing the fake
+  generation-loop shape without model weights
+- when `RUSTY_RUN_MLX_RUNTIME=1`, `native_mock_generate` wraps the full fake
+  loop into one command and uses shim handle counts to verify the temporary
+  token/logit arrays are released
+- `tokenizer_info` reports tokenizer metadata without exposing internals
+- `inspect_model_dir` inspects model directory structure and light config
+  metadata without loading weights
+- `inspect_tensor_descriptors` classifies tensor groups from safetensors
+  headers only, including shape, dtype, and byte offsets, without loading
+  payloads
+- `load_tensor_group` can read one logical quantized block from a safetensors
+  shard into shim-owned native records while keeping payload bytes off the
+  Rust boundary
+- `load_embedding_group` now promotes `model.embed_tokens` into a distinct
+  native embedding handle with metadata-only inspection and freed-handle
+  cleanup
+- `dequantize_group_slice` now proves a tiny placeholder dequantization path
+  from a loaded quantized group into a shim-owned `float32` array. The
+  current math is explicitly provisional (`value = nibble * scale + bias`)
+  and must be matched against MLX's real quantized kernel layout before any
+  meaningful matmul or generate work
+- `compare_dequant_slice` compares that provisional unpack against MLX's
+  native `dequantize` on a tiny packed block when the comparison path is
+  available, and otherwise records the searched public entry points and
+  headers
+- `quantized_linear_slice_probe` demonstrates that a tiny input vector can
+  participate in arithmetic against the verified quantized slice, but it is
+  still not full matmul
+- `quantized_linear_rows_probe` extends that to a tiny multi-row projection and
+  proves row traversal for the quantized slice path
+- `quantized_linear_fullrow_probe` traverses the full packed input width for
+  one q_proj group, with an explicit `input_len: 2560` check on model4, but it
+  still uses the provisional nibble/scale/bias layout
+- `quantized_linear_vector_probe` extends that to the full 4096-row output
+  vector for q_proj and records summary slices plus a simple checksum, but it
+  is still provisional and not a real matmul kernel
+- sparse and dense deterministic full-width q_proj sanity checks pass
+- `rmsnorm_probe` is the next isolated arithmetic primitive after dense q_proj:
+  it uses the layer 0 input_layernorm weight and `rms_norm_eps` from config to
+  verify RMSNorm math before any attention path is started
+- `layer0_single_token_probe` now composes the first layer-0 forward-pass
+  skeleton for one token: embedding row lookup, input RMSNorm, q/k/v
+  projections, single-token grouped-query attention, o_proj, and residual add.
+  It reports lengths, checksums, first values, timing, and handle counts while
+  keeping all tensor payloads inside the shim.
+- `layer0_mlp_probe` extends the verifier-only layer 0 path through the MLP:
+  post-attention RMSNorm, gate/up projections, SiLU(gate) * up, down
+  projection, and final residual add. It reports lengths, checksums, first
+  values, timing, and handle counts while creating no persistent handles.
+- `layer0_block_probe` consolidates the full verifier-only layer 0 block into
+  one log section: token id, input embedding checksum, attention residual
+  checksum, MLP residual checksum, output length, first output values, timing,
+  and handle counts before/after.
+- `layer_stack_probe` generalizes that verifier-only scaffold across N blocks:
+  the current verifier runs token id 1 through the first 4 layers, reporting
+  per-layer output checksums, final output length, first values, timing, and
+  handle counts without adding production generation.
+- `full_stack_single_token_probe` extends the same verifier-only path through
+  all configured model layers, final RMSNorm, and tied embedding projection to
+  report top logits. It still has no KV cache, no generation loop, and no
+  production wiring.
+- `greedy_next_token_probe` narrows that full-stack path to the argmax next
+  token and decodes it through a loaded tokenizer handle for verifier coverage
+  only. It still has no KV cache, no generation loop, and no production wiring.
+- `greedy_two_token_probe` repeats that verifier-only full-stack pass twice:
+  token id 1 produces argmax token A, token A produces argmax token B, and the
+  two generated tokens are decoded together. It still has no KV cache and no
+  production generation loop.
+- `greedy_session_generate_probe` keeps a native model/session handle live
+  across three verifier-only greedy steps. Each step still runs a full-stack
+  pass without KV cache, but the model/session/tokenizer lifecycle is now
+  represented explicitly.
+- `greedy_prompt_session_probe` adds a fixed-prompt verifier path: the loaded
+  tokenizer maps `hello` to token ids, those prompt tokens are run through the
+  same full-stack greedy session path, and one next token is decoded. It still
+  has no KV cache and no production generation loop.
+- `incremental_session_probe` introduces verifier-only native-session KV cache
+  metadata beside the full recompute path. It compares three greedy tokens from
+  prompt `hello`, decoded text, checksum tolerance, timing totals, and explicit
+  CPU/provisional fallback stage while preserving zero shim handles after the
+  probe.
+- real matmul/generate remains blocked until the dequant path is verified or
+  the native MLX quantized linear path is used directly
+- `quantization_layout_probe` now documents the raw quantized packing layout
+  for one loaded group, including tiny U32/BF16 debug samples and the inferred
+  block size
+- the slice probe is runtime-gated because it materializes a native MLX array
+  and should be exercised from a normal terminal with Metal/IOKit access
+- `load_model_native` / `unload_model_native` create and free native model
+  handles only
+- `create_native_session` / `free_native_session` create and free a session
+  handle that depends on a live native model and tokenizer
+- the shell validates handle relationships and freed-handle failures without
+  loading real weights yet
+- `load_layer_groups` / `layer_groups_info` / `free_layer_groups` now compose
+  a full Qwen3 layer wrapper over native tensor-group handles, keeping the
+  quantized attention/MLP groups separate from the norm groups while still
+  exposing only opaque handles and metadata at the Rust boundary
+- `model_load_plan` now synthesizes a read-only model loading plan from config
+  and safetensors descriptors without loading payloads, which is the next
+  useful step before any real weight loading
+- `create_model_descriptor` now promotes that plan into a persistent opaque
+  descriptor handle with loaded_weights=false, loaded_layers=0, and the same
+  validated metadata without loading tensor payloads
+
+Milestone proven:
+
+- text -> encode -> token array -> native session -> mock forward -> logits ->
+  sample -> decode
+- `native_mock_generate` wraps that loop into one command
+- handle counts before and after the runtime path prove no temporary native
+  token or logits arrays leak
+- Rust and CoffeeScript only see handles, text, token ids, and metadata
+- the C++ shim owns the MLX arrays
+- no model weights or real inference yet
+
+Next real milestone:
+
+1. inspect the real model directory layout
+2. detect `config.json`, tokenizer files, and `safetensors` files
+3. parse model config metadata
+4. create a native model descriptor
+5. only then attempt real weight loading
+
 Discovery clues:
 
 - `brew info mlx` reports stable `0.31.2` with installed `0.30.0` on request
