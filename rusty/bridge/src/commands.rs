@@ -4737,6 +4737,7 @@ pub fn dispatch(state: &mut BridgeState, request: Request) -> Response {
                 Err(response) => return response,
             };
             let tokenizer = arg_string(&request.args, "tokenizer");
+            let adapter_path = arg_string(&request.args, "adapter_path");
 
             if state.freed_native_models.contains(&model) {
                 return already_freed(&request, "native model", &model);
@@ -4760,6 +4761,7 @@ pub fn dispatch(state: &mut BridgeState, request: Request) -> Response {
                     model: Some(model.clone()),
                     tokenizer: tokenizer.clone(),
                     kv_cache: None,
+                    adapter_path: adapter_path.clone(),
                 },
             );
 
@@ -4769,6 +4771,7 @@ pub fn dispatch(state: &mut BridgeState, request: Request) -> Response {
                     "session": session,
                     "model": model,
                     "tokenizer": tokenizer,
+                    "adapter_path": adapter_path,
                     "native": true,
                     "session_created": true,
                     "active_native_sessions": state.native_sessions.len(),
@@ -4802,7 +4805,11 @@ pub fn dispatch(state: &mut BridgeState, request: Request) -> Response {
                 Some(record) => record,
                 None => return unknown_handle(&request, "native model", model),
             };
-            let mut result = shim::warm_resident_session(&session, &model_record.path);
+            let mut result = shim::warm_resident_session(
+                &session,
+                &model_record.path,
+                session_record.adapter_path.as_deref(),
+            );
             if let Some(object) = result.as_object_mut() {
                 object.insert("active_native_sessions".to_string(), json!(state.native_sessions.len()));
                 object.insert("active_native_models".to_string(), json!(state.native_models.len()));
@@ -4904,6 +4911,7 @@ pub fn dispatch(state: &mut BridgeState, request: Request) -> Response {
             let mut result = shim::generate_tokens_for_session(
                 &session,
                 &model_record.path,
+                session_record.adapter_path.as_deref(),
                 &prompt_token_ids,
                 first_decode_token_id,
                 generated_tokens,
@@ -5026,6 +5034,7 @@ pub fn dispatch(state: &mut BridgeState, request: Request) -> Response {
                     model: Some(model.clone()),
                     tokenizer: None,
                     kv_cache: Some(kv.clone()),
+                    adapter_path: None,
                 },
             );
 

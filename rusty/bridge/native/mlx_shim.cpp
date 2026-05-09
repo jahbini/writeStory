@@ -1,6 +1,7 @@
 #include "mlx_shim.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cctype>
 #include <cmath>
@@ -233,12 +234,59 @@ struct ResidentModelLayers {
 struct NativeResidentSessionRecord {
   std::string session;
   std::string model_dir;
+  std::string adapter_dir;
   TensorGroupRecord final_norm;
   TensorGroupRecord embedding;
   bool warmed = false;
   double first_warmup_ms = 0.0;
   ResidentProjectionWarmupTiming first_warmup_timing;
 };
+
+struct LoraProjectionRecord {
+  bool present = false;
+  std::string name;
+  std::vector<std::uint64_t> a_shape;
+  std::vector<std::uint64_t> b_shape;
+  std::optional<mlx::core::array> a;
+  std::optional<mlx::core::array> b;
+};
+
+struct LoraLayerRecord {
+  int layer = -1;
+  LoraProjectionRecord q_proj;
+  LoraProjectionRecord k_proj;
+  LoraProjectionRecord v_proj;
+  LoraProjectionRecord o_proj;
+  LoraProjectionRecord gate_proj;
+  LoraProjectionRecord up_proj;
+  LoraProjectionRecord down_proj;
+};
+
+struct NativeAdapterRecord {
+  std::string adapter_dir;
+  std::string dtype = "F32";
+  std::uint64_t rank = 0;
+  double scale = 0.0;
+  std::uint64_t tensor_count = 0;
+  std::vector<int> layers;
+  std::vector<std::string> targets;
+  std::vector<std::string> missing_expected_tensors;
+  std::vector<std::string> unexpected_tensors;
+  std::shared_ptr<const MappedFile> mapped_file;
+  std::unordered_map<int, LoraLayerRecord> layer_records;
+};
+
+std::unordered_map<std::string, std::shared_ptr<NativeAdapterRecord>>& native_adapter_cache() {
+  static std::unordered_map<std::string, std::shared_ptr<NativeAdapterRecord>> table;
+  return table;
+}
+
+std::mutex& native_adapter_mutex() {
+  static std::mutex mutex;
+  return mutex;
+}
+
+thread_local std::shared_ptr<NativeAdapterRecord> active_generation_adapter;
 
 std::unordered_map<std::string, NativeResidentSessionRecord>& native_resident_session_table() {
   static std::unordered_map<std::string, NativeResidentSessionRecord> table;
@@ -724,7 +772,9 @@ std::string backend_report_json(
                   result.per_layer_attention_backends.end(),
                   [](const std::string& backend) {
                     return backend == "mlx" || backend == "mlx_batched" ||
-                           backend == "mlx_expanded_kv";
+                           backend == "mlx_expanded_kv" ||
+                           backend == "mlx_chunked_expanded_kv" ||
+                           backend == "mlx_resident_block_chunked_expanded_kv";
                   }))
                  ? result.per_layer_attention_backends.front().c_str()
                  : "cpu",
@@ -1013,6 +1063,19 @@ std::string json_array_u64_to_string(const std::vector<std::uint64_t>& values) {
   return out.str();
 }
 
+std::string json_array_int_to_string(const std::vector<int>& values) {
+  std::ostringstream out;
+  out << "[";
+  for (std::size_t i = 0; i < values.size(); ++i) {
+    if (i > 0) {
+      out << ",";
+    }
+    out << values[i];
+  }
+  out << "]";
+  return out.str();
+}
+
 std::string json_array_float_to_string(const std::vector<float>& values) {
   std::ostringstream out;
   out << "[";
@@ -1277,6 +1340,194 @@ std::shared_ptr<const MappedFile> mapped_file_for_path(const std::string& path) 
     mapped_file_cache()[path] = file;
   }
   return file;
+}
+
+std::string join_path(const std::string& base, const std::string& leaf);
+bool extract_json_string_value(
+    const std::string& object,
+    const std::string& key,
+    std::string& output);
+bool extract_json_u64_value(
+    const std::string& object,
+    const std::string& key,
+    std::uint64_t& output);
+bool extract_json_double_value(
+    const std::string& object,
+    const std::string& key,
+    double& output);
+bool extract_json_array_u64(
+    const std::string& object,
+    const std::string& key,
+    std::vector<std::uint64_t>& output);
+std::string tensor_object_for_key(const std::string& json, const std::string& key);
+
+GroupTensorRecord load_single_safetensor_tensor(
+    const std::string& safetensor_path,
+    const std::string& tensor_name,
+    const std::shared_ptr<const MappedFile>& mapped_file) {
+  std::uint64_t header_len = 0;
+  std::string header_json;
+  if (!read_safetensor_header_cached(safetensor_path, header_len, header_json)) {
+    throw std::runtime_error("failed to read adapter safetensors header");
+  }
+  const std::string object = tensor_object_for_key(header_json, tensor_name);
+  if (object.empty()) {
+    throw std::runtime_error("adapter tensor missing: " + tensor_name);
+  }
+  GroupTensorRecord tensor;
+  tensor.kind = tensor_name;
+  tensor.source_file = safetensor_path;
+  tensor.mapped_file = mapped_file;
+  if (!extract_json_string_value(object, "dtype", tensor.dtype)) {
+    throw std::runtime_error("adapter tensor missing dtype: " + tensor_name);
+  }
+  if (!extract_json_array_u64(object, "shape", tensor.shape)) {
+    throw std::runtime_error("adapter tensor missing shape: " + tensor_name);
+  }
+  std::vector<std::uint64_t> offsets;
+  if (!extract_json_array_u64(object, "data_offsets", offsets) || offsets.size() != 2) {
+    throw std::runtime_error("adapter tensor missing data_offsets: " + tensor_name);
+  }
+  tensor.byte_start = offsets[0];
+  tensor.byte_end = offsets[1];
+  const std::uint64_t absolute_start = 8 + header_len + tensor.byte_start;
+  const std::uint64_t absolute_end = 8 + header_len + tensor.byte_end;
+  if (absolute_end > mapped_file->size || absolute_start > absolute_end) {
+    throw std::runtime_error("adapter tensor offsets out of range: " + tensor_name);
+  }
+  tensor.payload_view = mapped_file->data + absolute_start;
+  tensor.payload_view_size = static_cast<std::size_t>(absolute_end - absolute_start);
+  return tensor;
+}
+
+mlx::core::array mlx_f32_array_from_adapter_tensor(const GroupTensorRecord& tensor) {
+  if (tensor.dtype != "F32" || tensor.shape.size() != 2) {
+    throw std::runtime_error("adapter tensor must be F32 matrix: " + tensor.kind);
+  }
+  const std::size_t expected_bytes =
+      static_cast<std::size_t>(tensor.shape[0] * tensor.shape[1] * sizeof(float));
+  if (tensor.payload_view_size != expected_bytes || tensor.payload_view == nullptr) {
+    throw std::runtime_error("adapter tensor byte size mismatch: " + tensor.kind);
+  }
+  return mlx::core::array(
+      reinterpret_cast<const float*>(tensor.payload_view),
+      mlx::core::Shape{static_cast<int>(tensor.shape[0]), static_cast<int>(tensor.shape[1])},
+      mlx::core::float32);
+}
+
+LoraProjectionRecord load_lora_projection(
+    const std::string& safetensor_path,
+    const std::shared_ptr<const MappedFile>& mapped_file,
+    const std::string& prefix,
+    std::uint64_t expected_in,
+    std::uint64_t expected_out,
+    std::uint64_t rank) {
+  LoraProjectionRecord projection;
+  projection.name = prefix;
+  GroupTensorRecord a_tensor = load_single_safetensor_tensor(
+      safetensor_path, prefix + ".lora_a", mapped_file);
+  GroupTensorRecord b_tensor = load_single_safetensor_tensor(
+      safetensor_path, prefix + ".lora_b", mapped_file);
+  if (a_tensor.dtype != "F32" || b_tensor.dtype != "F32") {
+    throw std::runtime_error("adapter LoRA tensors must be F32: " + prefix);
+  }
+  if (a_tensor.shape.size() != 2 || b_tensor.shape.size() != 2 ||
+      a_tensor.shape[0] != expected_in ||
+      a_tensor.shape[1] != rank ||
+      b_tensor.shape[0] != rank ||
+      b_tensor.shape[1] != expected_out) {
+    throw std::runtime_error("adapter LoRA tensor shape mismatch: " + prefix);
+  }
+  projection.a_shape = a_tensor.shape;
+  projection.b_shape = b_tensor.shape;
+  projection.a.emplace(mlx_f32_array_from_adapter_tensor(a_tensor));
+  projection.b.emplace(mlx_f32_array_from_adapter_tensor(b_tensor));
+  projection.present = true;
+  return projection;
+}
+
+std::shared_ptr<NativeAdapterRecord> load_native_adapter_record(const std::string& adapter_dir) {
+  if (adapter_dir.empty()) {
+    return nullptr;
+  }
+  {
+    std::lock_guard<std::mutex> lock(native_adapter_mutex());
+    auto it = native_adapter_cache().find(adapter_dir);
+    if (it != native_adapter_cache().end()) {
+      return it->second;
+    }
+  }
+  const std::string config_path = join_path(adapter_dir, "adapter_config.json");
+  const std::string safetensor_path = join_path(adapter_dir, "adapters.safetensors");
+  std::string config_json;
+  if (!read_file_to_string(config_path, config_json)) {
+    throw std::runtime_error("adapter_config.json not readable");
+  }
+  auto adapter = std::make_shared<NativeAdapterRecord>();
+  adapter->adapter_dir = adapter_dir;
+  if (!extract_json_u64_value(config_json, "rank", adapter->rank) || adapter->rank == 0) {
+    throw std::runtime_error("adapter rank missing");
+  }
+  if (!extract_json_double_value(config_json, "scale", adapter->scale)) {
+    throw std::runtime_error("adapter scale missing");
+  }
+  adapter->mapped_file = mapped_file_for_path(safetensor_path);
+
+  const std::array<std::string, 7> targets = {
+      "q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"};
+  adapter->targets.assign(targets.begin(), targets.end());
+  adapter->layers.clear();
+  for (int layer = 20; layer <= 35; ++layer) {
+    LoraLayerRecord layer_record;
+    layer_record.layer = layer;
+    const std::string base = "model.layers." + std::to_string(layer) + ".";
+    layer_record.q_proj = load_lora_projection(
+        safetensor_path, adapter->mapped_file, base + "self_attn.q_proj", 2560, 4096, adapter->rank);
+    layer_record.k_proj = load_lora_projection(
+        safetensor_path, adapter->mapped_file, base + "self_attn.k_proj", 2560, 1024, adapter->rank);
+    layer_record.v_proj = load_lora_projection(
+        safetensor_path, adapter->mapped_file, base + "self_attn.v_proj", 2560, 1024, adapter->rank);
+    layer_record.o_proj = load_lora_projection(
+        safetensor_path, adapter->mapped_file, base + "self_attn.o_proj", 4096, 2560, adapter->rank);
+    layer_record.gate_proj = load_lora_projection(
+        safetensor_path, adapter->mapped_file, base + "mlp.gate_proj", 2560, 9728, adapter->rank);
+    layer_record.up_proj = load_lora_projection(
+        safetensor_path, adapter->mapped_file, base + "mlp.up_proj", 2560, 9728, adapter->rank);
+    layer_record.down_proj = load_lora_projection(
+        safetensor_path, adapter->mapped_file, base + "mlp.down_proj", 9728, 2560, adapter->rank);
+    adapter->layer_records[layer] = std::move(layer_record);
+    adapter->layers.push_back(layer);
+  }
+  adapter->tensor_count = 224;
+  {
+    std::lock_guard<std::mutex> lock(native_adapter_mutex());
+    native_adapter_cache()[adapter_dir] = adapter;
+  }
+  return adapter;
+}
+
+const LoraLayerRecord* adapter_layer_for(std::size_t layer) {
+  if (!active_generation_adapter) {
+    return nullptr;
+  }
+  auto it = active_generation_adapter->layer_records.find(static_cast<int>(layer));
+  if (it == active_generation_adapter->layer_records.end()) {
+    return nullptr;
+  }
+  return &it->second;
+}
+
+mlx::core::array apply_lora_delta_if_present(
+    const mlx::core::array& base_output,
+    const mlx::core::array& input_array,
+    const LoraProjectionRecord* projection) {
+  if (projection == nullptr || !projection->present) {
+    return base_output;
+  }
+  auto low_rank = mlx::core::matmul(input_array, *projection->a);
+  auto delta = mlx::core::matmul(low_rank, *projection->b) *
+      static_cast<float>(active_generation_adapter ? active_generation_adapter->scale : 1.0);
+  return base_output + delta;
 }
 
 bool read_file_range_to_bytes(
@@ -2391,6 +2642,11 @@ bool experimental_mlx_resident_block() {
   return env_truthy("RUSTY_EXPERIMENTAL_MLX_RESIDENT_BLOCK");
 }
 
+bool enable_layer0_diagnostic_probe() {
+  return env_truthy("RUSTY_DEBUG_LAYER0_PROBE") ||
+         env_truthy("RUSTY_VERIFY_LAYER0_PROBE");
+}
+
 bool resident_attention_to_o_enabled() {
   return env_truthy("RUSTY_RESIDENT_ATTENTION_TO_O");
 }
@@ -3056,17 +3312,26 @@ mlx::core::array quantized_linear_mlp_chain_residual_mlx(
     const TensorGroupRecord& down_record,
     const mlx::core::array& projection_input_array,
     const mlx::core::array& residual_base_array,
-    MlxResidentMlpChainTiming* timing = nullptr) {
+    MlxResidentMlpChainTiming* timing = nullptr,
+    const LoraProjectionRecord* gate_lora = nullptr,
+    const LoraProjectionRecord* up_lora = nullptr,
+    const LoraProjectionRecord* down_lora = nullptr) {
 #if defined(RUSTY_MLX_HAVE_NATIVE_LINK)
   LocalQuantizedMlxArrays gate_local;
   LocalQuantizedMlxArrays up_local;
   LocalQuantizedMlxArrays down_local;
   auto setup_start = std::chrono::steady_clock::now();
   const std::size_t input_width = static_cast<std::size_t>(projection_input_array.size());
-  auto gate_result = make_quantized_matmul_from_mlx_input(
-      gate_record, projection_input_array, gate_local, input_width);
-  auto up_result = make_quantized_matmul_from_mlx_input(
-      up_record, projection_input_array, up_local, input_width);
+  auto gate_result = apply_lora_delta_if_present(
+      make_quantized_matmul_from_mlx_input(
+          gate_record, projection_input_array, gate_local, input_width),
+      projection_input_array,
+      gate_lora);
+  auto up_result = apply_lora_delta_if_present(
+      make_quantized_matmul_from_mlx_input(
+          up_record, projection_input_array, up_local, input_width),
+      projection_input_array,
+      up_lora);
   if (timing != nullptr) {
     timing->setup_ms += std::chrono::duration<double, std::milli>(
         std::chrono::steady_clock::now() - setup_start).count();
@@ -3087,11 +3352,14 @@ mlx::core::array quantized_linear_mlp_chain_residual_mlx(
   }
 
   auto down_eval_start = std::chrono::steady_clock::now();
-  auto down_result = make_quantized_matmul_from_mlx_input(
-      down_record,
+  auto down_result = apply_lora_delta_if_present(
+      make_quantized_matmul_from_mlx_input(
+          down_record,
+          activated,
+          down_local,
+          gate_record.quantized_rows),
       activated,
-      down_local,
-      gate_record.quantized_rows);
+      down_lora);
   auto residual = down_result + residual_base_array;
   residual.eval();
   mlx::core::synchronize();
@@ -3107,6 +3375,9 @@ mlx::core::array quantized_linear_mlp_chain_residual_mlx(
   (void)projection_input_array;
   (void)residual_base_array;
   (void)timing;
+  (void)gate_lora;
+  (void)up_lora;
+  (void)down_lora;
   throw std::runtime_error("MLX native link is unavailable");
 #endif
 }
@@ -3289,15 +3560,27 @@ std::tuple<std::vector<float>, std::vector<float>, std::vector<float>> quantized
     const TensorGroupRecord& first_record,
     const TensorGroupRecord& second_record,
     const TensorGroupRecord& third_record,
-    const mlx::core::array& input_array) {
+    const mlx::core::array& input_array,
+    const LoraProjectionRecord* first_lora = nullptr,
+    const LoraProjectionRecord* second_lora = nullptr,
+    const LoraProjectionRecord* third_lora = nullptr) {
 #if defined(RUSTY_MLX_HAVE_NATIVE_LINK)
   LocalQuantizedMlxArrays first_local;
   LocalQuantizedMlxArrays second_local;
   LocalQuantizedMlxArrays third_local;
   const std::size_t input_width = static_cast<std::size_t>(input_array.size());
-  auto first_result = make_quantized_matmul_from_mlx_input(first_record, input_array, first_local, input_width);
-  auto second_result = make_quantized_matmul_from_mlx_input(second_record, input_array, second_local, input_width);
-  auto third_result = make_quantized_matmul_from_mlx_input(third_record, input_array, third_local, input_width);
+  auto first_result = apply_lora_delta_if_present(
+      make_quantized_matmul_from_mlx_input(first_record, input_array, first_local, input_width),
+      input_array,
+      first_lora);
+  auto second_result = apply_lora_delta_if_present(
+      make_quantized_matmul_from_mlx_input(second_record, input_array, second_local, input_width),
+      input_array,
+      second_lora);
+  auto third_result = apply_lora_delta_if_present(
+      make_quantized_matmul_from_mlx_input(third_record, input_array, third_local, input_width),
+      input_array,
+      third_lora);
   mlx::core::eval(first_result, second_result, third_result);
   mlx::core::synchronize();
   if (first_result.size() != static_cast<int>(first_record.quantized_rows) ||
@@ -3317,6 +3600,9 @@ std::tuple<std::vector<float>, std::vector<float>, std::vector<float>> quantized
   (void)second_record;
   (void)third_record;
   (void)input_array;
+  (void)first_lora;
+  (void)second_lora;
+  (void)third_lora;
   throw std::runtime_error("MLX native link is unavailable");
 #endif
 }
@@ -5650,6 +5936,7 @@ ResidentDecodeValue layer_decode_value_resident_incremental_from_input(
     throw std::runtime_error("resident decode value attention layer missing from KV cache");
   }
   auto input_norm = rmsnorm_mlx_array(groups.input_norm, input_value.mlx, eps);
+  const LoraLayerRecord* lora_layer = adapter_layer_for(layer);
   auto qkv_start = std::chrono::steady_clock::now();
   std::vector<float> q_values;
   std::vector<float> k_values;
@@ -5660,7 +5947,10 @@ ResidentDecodeValue layer_decode_value_resident_incremental_from_input(
         groups.q_proj,
         groups.k_proj,
         groups.v_proj,
-        input_norm);
+        input_norm,
+        lora_layer == nullptr ? nullptr : &lora_layer->q_proj,
+        lora_layer == nullptr ? nullptr : &lora_layer->k_proj,
+        lora_layer == nullptr ? nullptr : &lora_layer->v_proj);
     q_values = std::move(std::get<0>(qkv));
     k_values = std::move(std::get<1>(qkv));
     v_values = std::move(std::get<2>(qkv));
@@ -5717,6 +6007,10 @@ ResidentDecodeValue layer_decode_value_resident_incremental_from_input(
           attention_array,
           o_local,
           attention_array.size());
+      o_result = apply_lora_delta_if_present(
+          o_result,
+          attention_array,
+          lora_layer == nullptr ? nullptr : &lora_layer->o_proj);
       auto attention_residual = o_result + input_value.mlx;
       double o_ms = std::chrono::duration<double, std::milli>(
           std::chrono::steady_clock::now() - o_start).count();
@@ -5729,7 +6023,10 @@ ResidentDecodeValue layer_decode_value_resident_incremental_from_input(
           groups.down_proj,
           post_norm,
           attention_residual,
-          &mlp_timing);
+          &mlp_timing,
+          lora_layer == nullptr ? nullptr : &lora_layer->gate_proj,
+          lora_layer == nullptr ? nullptr : &lora_layer->up_proj,
+          lora_layer == nullptr ? nullptr : &lora_layer->down_proj);
 
       kv_cache.layers[layer] = std::move(resident_layer_cache);
       append_native_kv(&kv_cache, layer, k_values, v_values);
@@ -5814,6 +6111,10 @@ ResidentDecodeValue layer_decode_value_resident_incremental_from_input(
           attention_array,
           o_local,
           attention_array.size());
+      o_result = apply_lora_delta_if_present(
+          o_result,
+          attention_array,
+          lora_layer == nullptr ? nullptr : &lora_layer->o_proj);
       kv_cache.layers[layer] = std::move(resident_layer_cache);
       append_native_kv(&kv_cache, layer, k_values, v_values);
       if (timing != nullptr) {
@@ -5864,7 +6165,10 @@ ResidentDecodeValue layer_decode_value_resident_incremental_from_input(
           groups.down_proj,
           post_norm,
           attention_residual,
-          &mlp_timing);
+          &mlp_timing,
+          lora_layer == nullptr ? nullptr : &lora_layer->gate_proj,
+          lora_layer == nullptr ? nullptr : &lora_layer->up_proj,
+          lora_layer == nullptr ? nullptr : &lora_layer->down_proj);
       if (timing != nullptr) {
         timing->gate_up_projection_ms += mlp_timing.gate_up_eval_ms + mlp_timing.setup_ms;
         timing->gate_up_activation_ms += mlp_timing.activation_eval_ms;
@@ -6009,6 +6313,10 @@ ResidentDecodeValue layer_decode_value_resident_incremental_from_input(
       attention_array,
       o_local,
       attention_values.size());
+  o_result = apply_lora_delta_if_present(
+      o_result,
+      attention_array,
+      lora_layer == nullptr ? nullptr : &lora_layer->o_proj);
   auto attention_residual = o_result + input_value.mlx;
   attention_residual.eval();
   mlx::core::synchronize();
@@ -6026,7 +6334,10 @@ ResidentDecodeValue layer_decode_value_resident_incremental_from_input(
       groups.down_proj,
       post_norm,
       attention_residual,
-      &mlp_timing);
+      &mlp_timing,
+      lora_layer == nullptr ? nullptr : &lora_layer->gate_proj,
+      lora_layer == nullptr ? nullptr : &lora_layer->up_proj,
+      lora_layer == nullptr ? nullptr : &lora_layer->down_proj);
   if (timing != nullptr) {
     timing->gate_up_projection_ms += mlp_timing.setup_ms + mlp_timing.gate_up_eval_ms;
     timing->gate_projection_ms += (mlp_timing.setup_ms + mlp_timing.gate_up_eval_ms) / 2.0;
@@ -10550,7 +10861,7 @@ const char* rusty_mlx_fastsmoke_generation_probe_json(
     std::string layer0_mlx_resident_full_block_probe = "{\"available\":false,\"error\":\"not_run\"}";
 #if defined(RUSTY_MLX_HAVE_NATIVE_LINK)
     try {
-      if (!resident.layers.empty()) {
+      if (enable_layer0_diagnostic_probe() && !resident.layers.empty()) {
         const std::vector<float> layer0_probe_input =
             embedding_values_from_record(embedding, static_cast<std::size_t>(prompt_token_ids[0]));
         layer0_mlx_resident_full_block_probe =
@@ -10567,6 +10878,21 @@ const char* rusty_mlx_fastsmoke_generation_probe_json(
           "{\"available\":false,\"error\":\"unknown_exception\"}";
     }
 #endif
+
+    const auto adapter = active_generation_adapter;
+    const bool adapter_active = adapter != nullptr;
+    const std::uint64_t adapter_layer_count = adapter_active
+        ? static_cast<std::uint64_t>(adapter->layers.size())
+        : 0ULL;
+    const std::uint64_t adapter_sites_per_token = adapter_active
+        ? adapter_layer_count * 7ULL
+        : 0ULL;
+    const std::uint64_t adapter_decode_token_count = generated_ids.size() > 1
+        ? static_cast<std::uint64_t>(generated_ids.size() - 1)
+        : 0ULL;
+    const std::uint64_t adapter_applied_projection_count =
+        adapter_sites_per_token *
+        (static_cast<std::uint64_t>(prompt_token_ids.size()) + adapter_decode_token_count);
 
     std::ostringstream json_out;
     json_out << "{"
@@ -10657,6 +10983,28 @@ const char* rusty_mlx_fastsmoke_generation_probe_json(
              << "\"readback_reasons\":" << readback_reasons_json() << ","
              << "\"cpu_fallback_steps\":" << cpu_fallback_steps_json() << ","
              << "\"fallback_used\":" << (any_fallback || fallback_used ? "true" : "false") << ","
+             << "\"adapter_requested\":" << (adapter_active ? "true" : "false") << ","
+             << "\"adapter_active\":" << (adapter_active ? "true" : "false") << ","
+             << "\"adapter_path\":\"" << json_escape(adapter_active ? adapter->adapter_dir : "") << "\","
+             << "\"adapter_tensor_count\":" << (adapter_active ? adapter->tensor_count : 0) << ","
+             << "\"adapter_dtype\":\"" << json_escape(adapter_active ? adapter->dtype : "") << "\","
+             << "\"adapter_rank\":" << (adapter_active ? adapter->rank : 0) << ","
+             << "\"adapter_scale\":" << (adapter_active ? adapter->scale : 0.0) << ","
+             << "\"adapter_layers\":" << (adapter_active ? json_array_int_to_string(adapter->layers) : "[]") << ","
+             << "\"adapter_layer_count\":" << adapter_layer_count << ","
+             << "\"adapter_targets\":" << (adapter_active ? json_array_string_to_string(adapter->targets) : "[]") << ","
+             << "\"adapter_tensors_loaded\":" << (adapter_active ? adapter->tensor_count : 0) << ","
+             << "\"adapter_missing_expected_tensors\":"
+             << (adapter_active ? json_array_string_to_string(adapter->missing_expected_tensors) : "[]") << ","
+             << "\"adapter_unexpected_tensors\":"
+             << (adapter_active ? json_array_string_to_string(adapter->unexpected_tensors) : "[]") << ","
+             << "\"adapter_applied_to_prefill\":"
+             << ((adapter_active && !prompt_token_ids.empty()) ? "true" : "false") << ","
+             << "\"adapter_applied_to_decode\":"
+             << ((adapter_active && adapter_decode_token_count > 0) ? "true" : "false") << ","
+             << "\"adapter_applied_projection_count\":" << adapter_applied_projection_count << ","
+             << "\"adapter_fallback_used\":false,"
+             << "\"adapter_error\":null,"
              << "\"cached_mlx_arrays_path_applied_to_generation\":" << (enable_cached_mlx_quantized_arrays() ? "true" : "false") << ","
              << "\"resident_mlx_projection_arrays_applied_to_generation\":"
              << (use_resident_mlx_projection_arrays() ? "true" : "false") << ","
@@ -10839,7 +11187,8 @@ const char* rusty_mlx_fastsmoke_generation_probe_json(
 
 const char* rusty_mlx_warm_resident_session_json(
     const char* session,
-    const char* model_dir) {
+    const char* model_dir,
+    const char* adapter_dir) {
   static std::string output;
 #if defined(RUSTY_MLX_HAVE_NATIVE_LINK)
   try {
@@ -10849,6 +11198,7 @@ const char* rusty_mlx_warm_resident_session_json(
     }
     const std::string session_str(session);
     const std::string model_dir_str(model_dir);
+    const std::string adapter_dir_str(adapter_dir == nullptr ? "" : adapter_dir);
     std::string config_json;
     if (!read_file_to_string(join_path(model_dir_str, "config.json"), config_json)) {
       output = "{\"ok\":false,\"error\":\"bad_args\",\"message\":\"config.json not readable\"}";
@@ -10870,7 +11220,8 @@ const char* rusty_mlx_warm_resident_session_json(
           << "\"warmed\":true,"
           << "\"reused\":true,"
           << "\"warmup_ms\":0,"
-          << "\"first_warmup_ms\":" << existing->second.first_warmup_ms
+          << "\"first_warmup_ms\":" << existing->second.first_warmup_ms << ","
+          << "\"adapter_path\":\"" << json_escape(existing->second.adapter_dir) << "\""
           << "}";
       output = out.str();
       return output.c_str();
@@ -10881,6 +11232,7 @@ const char* rusty_mlx_warm_resident_session_json(
     NativeResidentSessionRecord record;
     record.session = session_str;
     record.model_dir = model_dir_str;
+    record.adapter_dir = adapter_dir_str;
     auto final_norm_spec = group_load_spec_for("model.norm");
     if (!final_norm_spec || !load_tensor_group_record(model_dir_str, *final_norm_spec, record.final_norm)) {
       output = "{\"ok\":false,\"error\":\"bad_args\",\"message\":\"failed to load final norm\"}";
@@ -10893,6 +11245,9 @@ const char* rusty_mlx_warm_resident_session_json(
     }
     const auto warmup_start = std::chrono::steady_clock::now();
     warm_resident_mlx_projection_arrays(resident, record.embedding, &record.first_warmup_timing);
+    if (!adapter_dir_str.empty()) {
+      (void)load_native_adapter_record(adapter_dir_str);
+    }
     record.first_warmup_ms = std::chrono::duration<double, std::milli>(
         std::chrono::steady_clock::now() - warmup_start).count();
     record.warmed = true;
@@ -10904,6 +11259,7 @@ const char* rusty_mlx_warm_resident_session_json(
         << "\"session\":\"" << json_escape(session_str) << "\","
         << "\"warmed\":true,"
         << "\"reused\":false,"
+        << "\"adapter_path\":\"" << json_escape(stored.adapter_dir) << "\","
         << "\"warmup_ms\":" << stored.first_warmup_ms << ","
         << "\"timing_ms\":{"
         << "\"enumerate_groups_ms\":" << stored.first_warmup_timing.enumerate_groups_ms << ","
@@ -10923,6 +11279,7 @@ const char* rusty_mlx_warm_resident_session_json(
 #else
   (void)session;
   (void)model_dir;
+  (void)adapter_dir;
   output = "{\"ok\":false,\"error\":\"mlx_link_unavailable\"}";
 #endif
   return output.c_str();
@@ -10931,6 +11288,7 @@ const char* rusty_mlx_warm_resident_session_json(
 const char* rusty_mlx_generate_tokens_for_session_json(
     const char* session,
     const char* model_dir,
+    const char* adapter_dir,
     unsigned long long prompt_token_id,
     const char* prompt_token_ids_csv,
     unsigned long long first_decode_token_id,
@@ -10944,6 +11302,7 @@ const char* rusty_mlx_generate_tokens_for_session_json(
     const char* stop_token_ids_csv) {
   static std::string output;
 #if defined(RUSTY_MLX_HAVE_NATIVE_LINK)
+  std::shared_ptr<NativeAdapterRecord> previous_adapter = active_generation_adapter;
   try {
     if (session == nullptr || model_dir == nullptr) {
       output = "{\"ok\":false,\"error\":\"bad_args\"}";
@@ -10956,9 +11315,17 @@ const char* rusty_mlx_generate_tokens_for_session_json(
         output = "{\"ok\":false,\"error\":\"session_not_warmed\"}";
         return output.c_str();
       }
+      const std::string session_adapter_dir = it->second.adapter_dir;
+      const std::string requested_adapter_dir(adapter_dir == nullptr ? "" : adapter_dir);
+      const std::string active_adapter_dir =
+          requested_adapter_dir.empty() ? session_adapter_dir : requested_adapter_dir;
+      active_generation_adapter = active_adapter_dir.empty()
+          ? nullptr
+          : load_native_adapter_record(active_adapter_dir);
     }
     if (top_p != 1.0) {
       output = "{\"ok\":false,\"error\":\"unsupported_sampling\",\"message\":\"top_p sampling is not implemented\"}";
+      active_generation_adapter = previous_adapter;
       return output.c_str();
     }
     SamplingConfig previous_sampling_config = generation_sampling_config;
@@ -10982,12 +11349,15 @@ const char* rusty_mlx_generate_tokens_for_session_json(
         generated_tokens);
     generation_sampling_config = previous_sampling_config;
     generation_stop_config = previous_stop_config;
+    active_generation_adapter = previous_adapter;
   } catch (...) {
+    active_generation_adapter = previous_adapter;
     output = "{\"ok\":false,\"error\":\"unknown_exception\"}";
   }
 #else
   (void)session;
   (void)model_dir;
+  (void)adapter_dir;
   (void)prompt_token_id;
   (void)prompt_token_ids_csv;
   (void)first_decode_token_id;

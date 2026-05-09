@@ -115,10 +115,12 @@ unsafe extern "C" {
     fn rusty_mlx_warm_resident_session_json(
         session: *const c_char,
         model_dir: *const c_char,
+        adapter_dir: *const c_char,
     ) -> *const c_char;
     fn rusty_mlx_generate_tokens_for_session_json(
         session: *const c_char,
         model_dir: *const c_char,
+        adapter_dir: *const c_char,
         prompt_token_id: c_ulonglong,
         prompt_token_ids_csv: *const c_char,
         first_decode_token_id: c_ulonglong,
@@ -864,11 +866,16 @@ pub fn fastsmoke_generation_probe(
     })
 }
 
-pub fn warm_resident_session(session: &str, model_dir: &str) -> Value {
+pub fn warm_resident_session(session: &str, model_dir: &str, adapter_dir: Option<&str>) -> Value {
     let session_c = CString::new(session).unwrap_or_default();
     let model_dir_c = CString::new(model_dir).unwrap_or_default();
+    let adapter_dir_c = CString::new(adapter_dir.unwrap_or("")).unwrap_or_default();
     let raw = unsafe {
-        let ptr = rusty_mlx_warm_resident_session_json(session_c.as_ptr(), model_dir_c.as_ptr());
+        let ptr = rusty_mlx_warm_resident_session_json(
+            session_c.as_ptr(),
+            model_dir_c.as_ptr(),
+            adapter_dir_c.as_ptr(),
+        );
         if ptr.is_null() {
             "{}".to_string()
         } else {
@@ -887,6 +894,7 @@ pub fn warm_resident_session(session: &str, model_dir: &str) -> Value {
 pub fn generate_tokens_for_session(
     session: &str,
     model_dir: &str,
+    adapter_dir: Option<&str>,
     prompt_token_ids: &[u64],
     first_decode_token_id: u64,
     generated_tokens: u64,
@@ -900,6 +908,7 @@ pub fn generate_tokens_for_session(
 ) -> Value {
     let session_c = CString::new(session).unwrap_or_default();
     let model_dir_c = CString::new(model_dir).unwrap_or_default();
+    let adapter_dir_c = CString::new(adapter_dir.unwrap_or("")).unwrap_or_default();
     let prompt_token_id = prompt_token_ids.first().copied().unwrap_or(1);
     let prompt_token_ids_csv = prompt_token_ids
         .iter()
@@ -917,6 +926,7 @@ pub fn generate_tokens_for_session(
         let ptr = rusty_mlx_generate_tokens_for_session_json(
             session_c.as_ptr(),
             model_dir_c.as_ptr(),
+            adapter_dir_c.as_ptr(),
             prompt_token_id as c_ulonglong,
             prompt_token_ids_c.as_ptr(),
             first_decode_token_id as c_ulonglong,

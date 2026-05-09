@@ -54,6 +54,7 @@ pub struct SessionRecord {
     pub model: Option<String>,
     pub tokenizer: Option<String>,
     pub kv_cache: Option<String>,
+    pub adapter_path: Option<String>,
 }
 
 // These fields are intentionally present for the upcoming real ML handle lifecycle.

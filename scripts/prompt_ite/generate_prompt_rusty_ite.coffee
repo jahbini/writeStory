@@ -119,6 +119,26 @@ buildControls = (L) ->
   throw new Error "[#{L.stepName}] top_k must be greater than 0 when temperature > 0" if Number(controls.temperature) > 0 and Number(controls.top_k) <= 0
   controls
 
+resolveAdapterPath = (L) ->
+  mlx = L.param('mlx', {}) ? {}
+  sharedMlx = L.getStepParam('generate_prompt_ite', 'mlx', {}) ? {}
+  adapterPath = firstDefined(
+    L.param('adapter_path', null),
+    mlx.adapter_path,
+    mlx.adapterPath,
+    mlx.adapter,
+    sharedMlx.adapter_path,
+    sharedMlx.adapterPath,
+    sharedMlx.adapter
+  )
+  return null unless adapterPath?
+  adapterPath = String(adapterPath).trim()
+  return null unless adapterPath.length
+  if path.isAbsolute adapterPath
+    adapterPath
+  else
+    path.resolve adapterPath
+
 resolvePrompt = (L) ->
   ownPrompt = L.param 'prompt_text', null
   return String(ownPrompt ? '').trim() if ownPrompt?
@@ -141,6 +161,7 @@ resolvePrompt = (L) ->
     modelDir = resolveModelDir modelDir
 
     controls = buildControls L
+    adapterPath = resolveAdapterPath L
     formattedInfo = if controls.chat then formatChatPrompt(modelDir, prompt, controls.system_prompt) else null
     formattedPrompt = if controls.chat then formattedInfo.formatted else prompt
     eosTokenId = readEosTokenId modelDir
@@ -165,7 +186,8 @@ resolvePrompt = (L) ->
       model = await api.loadModel modelDir
       tokenizer = await api.loadTokenizer modelDir
       tokenizerInfo = await api.tokenizerInfo tokenizer
-      session = await api.createSession model, tokenizer
+      session = await api.createSession model, tokenizer,
+        adapterPath: adapterPath
 
       promptTokenIds = await api.encodePrompt session, formattedPrompt
       console.log "[generate_prompt_rusty_ite] prompt chars:", prompt.length
@@ -200,6 +222,24 @@ resolvePrompt = (L) ->
       meta =
         mode: 'prompt_rusty'
         model_dir: modelDir
+        adapter_requested: adapterPath?
+        adapter_path: adapterPath
+        adapter_active: generation.adapter_active
+        adapter_tensor_count: generation.adapter_tensor_count
+        adapter_dtype: generation.adapter_dtype
+        adapter_rank: generation.adapter_rank
+        adapter_scale: generation.adapter_scale
+        adapter_layers: generation.adapter_layers
+        adapter_layer_count: generation.adapter_layer_count
+        adapter_targets: generation.adapter_targets
+        adapter_tensors_loaded: generation.adapter_tensors_loaded
+        adapter_missing_expected_tensors: generation.adapter_missing_expected_tensors
+        adapter_unexpected_tensors: generation.adapter_unexpected_tensors
+        adapter_applied_to_prefill: generation.adapter_applied_to_prefill
+        adapter_applied_to_decode: generation.adapter_applied_to_decode
+        adapter_applied_projection_count: generation.adapter_applied_projection_count
+        adapter_fallback_used: generation.adapter_fallback_used
+        adapter_error: generation.adapter_error
         attention_backend_default: generation.attention_backend_default
         attention_backend_active: generation.attention_backend_active
         expanded_kv_cache: generation.expanded_kv_cache

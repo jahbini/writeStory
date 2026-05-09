@@ -28,3 +28,7 @@ Invariants:
 
 Known pitfalls:
 - this step used to carry inference-style scaffolding; do not restore it
+- short stories are common near the end of a LoRA cycle; do not let the prompt
+  fragment consume every paragraph in a two-paragraph story
+- one-paragraph stories should produce a simple prefix/continuation row when
+  the paragraph is long enough, rather than causing a zero-row batch shutdown

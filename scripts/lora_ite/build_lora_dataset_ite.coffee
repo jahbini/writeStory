@@ -47,12 +47,42 @@ buildFragmentParagraphs = (paragraphs) ->
   currentText = rval.join "\n\n"
   currentLen = currentText.length
 
-  if currentLen < 300 and paragraphs.length > 1
+  if currentLen < 300 and paragraphs.length > 2
     secondPara = paragraphs[1] ? ''
     if secondPara.trim().length > 0
       rval.push secondPara.trim()
 
   rval
+
+splitSingleParagraphTrainingText = (paragraph) ->
+  text = String(paragraph ? '').trim()
+  return null unless text.length >= 120
+
+  sentences = text.split /(?<=[.!?])\s+/
+    .map (sentence) -> String(sentence ? '').trim()
+    .filter (sentence) -> sentence.length > 0
+
+  if sentences.length >= 2
+    promptSentences = 1
+    if sentences.length >= 4
+      promptSentences = Math.max 1, Math.floor(sentences.length / 3)
+    prompt = sentences.slice(0, promptSentences).join " "
+    completion = sentences.slice(promptSentences).join " "
+    if prompt.length > 0 and completion.length > 0
+      return prompt: prompt + "\n\n", completion: completion
+
+  words = text.split /\s+/
+    .map (word) -> String(word ? '').trim()
+    .filter (word) -> word.length > 0
+  return null unless words.length >= 24
+
+  splitAt = Math.max 8, Math.floor(words.length * 0.35)
+  return null if splitAt >= words.length
+
+  prompt = words.slice(0, splitAt).join " "
+  completion = words.slice(splitAt).join " "
+  return null unless prompt.length > 0 and completion.length > 0
+  prompt: prompt + "\n\n", completion: completion
 
 @step =
   desc: "Build LoRA train/valid/test rows from SQLite-backed stories"
@@ -72,6 +102,7 @@ buildFragmentParagraphs = (paragraphs) ->
 
     rows = []
     rowsWritten = 0
+    fallbackRowsWritten = 0
     storiesProcessed = 0
 
     MAX_TOTAL_TOKENS = 1024
@@ -114,6 +145,12 @@ buildFragmentParagraphs = (paragraphs) ->
         completionParagraphs = groupParagraphs.slice completionStartIndex
 
         if completionParagraphs.length is 0
+          if groupParagraphs.length is 1
+            fallback = splitSingleParagraphTrainingText groupParagraphs[0]
+            if fallback?
+              rows.push text: fallback.prompt + fallback.completion
+              rowsWritten += 1
+              fallbackRowsWritten += 1
           continue
 
         maxCompletionTokens = MAX_TOTAL_TOKENS - promptTokens - SAFETY_TOKENS
@@ -184,6 +221,7 @@ buildFragmentParagraphs = (paragraphs) ->
 
     console.log "[build_lora_dataset_ite] stories processed:", storiesProcessed
     console.log "[build_lora_dataset_ite] rows written:", rowsWritten
+    console.log "[build_lora_dataset_ite] single-paragraph fallback rows:", fallbackRowsWritten
 
     if rows.length is 0
       shutdownAt = new Date().toISOString()

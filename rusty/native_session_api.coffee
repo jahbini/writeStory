@@ -81,9 +81,11 @@ class RustyNativeSessionApi
   tokenizerInfo: (tokenizer) ->
     await @value 'tokenizer_info', tokenizer: tokenizer
 
-  createSession: (model, tokenizer = null) ->
+  createSession: (model, tokenizer = null, opts = {}) ->
     args = model: model
     args.tokenizer = tokenizer if tokenizer?
+    adapterPath = opts.adapterPath ? opts.adapter_path
+    args.adapter_path = adapterPath if adapterPath?
     value = await @value 'create_native_session', args
     @sessionTokenizers.set value.session, tokenizer if tokenizer?
     value
