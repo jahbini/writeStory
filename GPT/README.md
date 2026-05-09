@@ -17,6 +17,12 @@ Rules:
   baseline in smoke/default verification. Record the baseline timing/result as
   metadata and re-run the old path only under an explicit full/comparison
   profile or when its math contract changed.
+- universal Rusty runtime commandment: do not rerun a path that has already
+  been disproved for speed or memory just to refresh a comparison. Record the
+  result in `rusty/STATUS.md` and refer to it. Current examples include
+  long-generation CPU attention and full preallocated `expanded_kv` for
+  `max_tokens=2000`, and MLX/OMP/VECLIB/RAYON thread-count runs at 8 and 12;
+  normal tests should exercise the active current path.
 - repository-level runtime tests are coordinated through root `test.sh`.
   Codex owns that file's contents and should replace it as needed for the
   current task, record every test's `.log` and `.err` output explicitly, and
@@ -26,8 +32,13 @@ Rules:
 
 Current repository assumptions worth preserving:
 - the repo is pipe-centric; active workspaces live under `pipes/<organization>_<model>/`
-- `override.yaml` is foundational and must carry the base `run.model`
-- `control_override.yaml` is UI-owned run control, not a replacement for `override.yaml`
+- overrides are recipe-scoped: prefer `override/<pipeline>.yaml` for human
+  overrides associated with a selected config recipe
+- legacy `override.yaml` remains a fallback/bootstrap file for older pipes and
+  initial pipeline/model inference; when used for a selected pipeline it should
+  be materialized into `override/<pipeline>.yaml` for future runs
+- `control_override.yaml` is UI-owned run control, not a replacement for
+  recipe-scoped human overrides
 - new empty pipes infer their model identity from the pipe directory name
 - `base_ite` now owns base preparation through quantization, so downstream inference recipes consume prepared artifacts instead of rebuilding them
 - the UI drives recipe fields through recipe-declared directives, currently `UI_dropdown`, `UI_checkbox`, and `UI_textarea`

@@ -4769,7 +4769,10 @@ pub fn dispatch(state: &mut BridgeState, request: Request) -> Response {
                     "session": session,
                     "model": model,
                     "tokenizer": tokenizer,
-                    "native": true
+                    "native": true,
+                    "session_created": true,
+                    "active_native_sessions": state.native_sessions.len(),
+                    "active_native_models": state.native_models.len()
                 }),
             )
         }
@@ -4799,7 +4802,11 @@ pub fn dispatch(state: &mut BridgeState, request: Request) -> Response {
                 Some(record) => record,
                 None => return unknown_handle(&request, "native model", model),
             };
-            let result = shim::warm_resident_session(&session, &model_record.path);
+            let mut result = shim::warm_resident_session(&session, &model_record.path);
+            if let Some(object) = result.as_object_mut() {
+                object.insert("active_native_sessions".to_string(), json!(state.native_sessions.len()));
+                object.insert("active_native_models".to_string(), json!(state.native_models.len()));
+            }
             if result.get("ok").and_then(Value::as_bool) == Some(true) {
                 Response::ok(request.id, result)
             } else {
@@ -4894,7 +4901,7 @@ pub fn dispatch(state: &mut BridgeState, request: Request) -> Response {
                 Some(record) => record,
                 None => return unknown_handle(&request, "native model", model),
             };
-            let result = shim::generate_tokens_for_session(
+            let mut result = shim::generate_tokens_for_session(
                 &session,
                 &model_record.path,
                 &prompt_token_ids,
@@ -4908,6 +4915,11 @@ pub fn dispatch(state: &mut BridgeState, request: Request) -> Response {
                 eos_token_id,
                 &stop_token_ids,
             );
+            if let Some(object) = result.as_object_mut() {
+                object.insert("active_native_sessions".to_string(), json!(state.native_sessions.len()));
+                object.insert("active_native_models".to_string(), json!(state.native_models.len()));
+                object.insert("active_native_tokenizers".to_string(), json!(state.tokenizers.len()));
+            }
             if result.get("ok").and_then(Value::as_bool) == Some(true) {
                 Response::ok(request.id, result)
             } else {
@@ -4934,7 +4946,10 @@ pub fn dispatch(state: &mut BridgeState, request: Request) -> Response {
                 request.id,
                 json!({
                     "session": session,
-                    "removed": true
+                    "removed": true,
+                    "session_freed": true,
+                    "active_native_sessions": state.native_sessions.len(),
+                    "active_native_models": state.native_models.len()
                 }),
             )
         }

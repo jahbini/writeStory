@@ -156,6 +156,7 @@ resolvePrompt = (L) ->
       tokenizer_unloaded: false
       model_unloaded: false
       bridge_shutdown_requested: false
+      active_native_sessions_after_free: null
 
     meta = null
     rawRecord = null
@@ -202,8 +203,17 @@ resolvePrompt = (L) ->
         attention_backend_default: generation.attention_backend_default
         attention_backend_active: generation.attention_backend_active
         expanded_kv_cache: generation.expanded_kv_cache
+        chunked_expanded_kv_cache: generation.chunked_expanded_kv_cache
         experimental_mlx_attention_enabled: generation.experimental_mlx_attention_enabled
         experimental_mlx_attention_mode: generation.experimental_mlx_attention_mode
+        mlx_resident_mlp_chain_available: generation.mlx_resident_mlp_chain_available
+        mlx_resident_mlp_chain_applied_to_generation: generation.mlx_resident_mlp_chain_applied_to_generation
+        mlx_resident_mlp_chain_default_path: generation.mlx_resident_mlp_chain_default_path
+        resident_mlp_only_requested: generation.resident_mlp_only_requested
+        resident_mlp_only_enabled: generation.resident_mlp_only_enabled
+        resident_mlp_only_semantics: generation.resident_mlp_only_semantics
+        resident_o_residual_enabled: generation.resident_o_residual_enabled
+        resident_attention_to_o_enabled: generation.resident_attention_to_o_enabled
         chat: controls.chat
         chat_template_present: formattedInfo?.chat_template_present ? false
         chat_template_applied: formattedInfo?.chat_template_applied ? false
@@ -216,6 +226,11 @@ resolvePrompt = (L) ->
         controls: controls
         eos_token_id: eosTokenId
         tokenizer_added_tokens_count: tokenizerInfo.added_tokens_count
+        session_created: session?.session_created ? true
+        active_native_sessions: generation.active_native_sessions
+        active_native_models: generation.active_native_models
+        active_native_tokenizers: generation.active_native_tokenizers
+        memory_diagnostics: generation.memory_diagnostics
         warmup_ms: warm.warmup_ms
         warmup_reused: warm.reused
         generation_timing_ms: generation.generation_1_total_ms ? generation.total_generation_ms
@@ -243,14 +258,17 @@ resolvePrompt = (L) ->
 
       console.log "[generate_prompt_rusty_ite] text chars:", text.length
       console.log "[generate_prompt_rusty_ite] backend:", meta.attention_backend_active
+      console.log "[generate_prompt_rusty_ite] resident MLP default:", meta.mlx_resident_mlp_chain_default_path
+      console.log "[generate_prompt_rusty_ite] resident MLP-only flag:", meta.resident_mlp_only_semantics ? 'n/a'
       console.log "[generate_prompt_rusty_ite] generation ms:", meta.generation_timing_ms
       console.log "[generate_prompt_rusty_ite] tokens/sec:", meta.tokens_per_second
       console.log "[generate_prompt_rusty_ite] stop:", meta.stop_reason, meta.stop_token_id ? ''
     finally
       if session?
         try
-          await api.freeSession session
+          freed = await api.freeSession session
           cleanup.session_freed = true
+          cleanup.active_native_sessions_after_free = freed.active_native_sessions ? null
         catch _err
           null
       if tokenizer?

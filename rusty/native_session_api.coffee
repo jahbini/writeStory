@@ -86,9 +86,10 @@ class RustyNativeSessionApi
     args.tokenizer = tokenizer if tokenizer?
     value = await @value 'create_native_session', args
     @sessionTokenizers.set value.session, tokenizer if tokenizer?
-    value.session
+    value
 
   tokenizerFor: (target) ->
+    target = target.session if target? and typeof target is 'object' and typeof target.session is 'string'
     return target if typeof target is 'string' and target.indexOf('tok:') is 0
     tokenizer = @sessionTokenizers.get target
     throw new Error "no tokenizer associated with #{target}" unless tokenizer?
@@ -111,9 +112,11 @@ class RustyNativeSessionApi
     if opts.returnFull ? false then value else value.text
 
   warmSession: (session) ->
-    await @value 'warm_resident_session', session: session
+    sessionHandle = if typeof session is 'string' then session else session.session
+    await @value 'warm_resident_session', session: sessionHandle
 
   generateTokens: (session, promptTokenIds, n, opts = {}) ->
+    sessionHandle = if typeof session is 'string' then session else session.session
     temperature = opts.temperature ? 0
     topK = opts.topK ? opts.top_k ? 0
     topP = opts.topP ? opts.top_p ? 1.0
@@ -121,7 +124,7 @@ class RustyNativeSessionApi
     throw new Error 'native generateTokens supports top_p only when disabled at 1.0' unless Number(topP) is 1
     throw new Error 'native generateTokens requires top_k > 0 when temperature > 0' if Number(temperature) > 0 and Number(topK) <= 0
     await @value 'generate_tokens',
-      session: session
+      session: sessionHandle
       prompt_token_ids: promptTokenIds
       first_decode_token_id: opts.firstDecodeTokenId ? promptTokenIds[promptTokenIds.length - 1] ? 15
       generated_tokens: n
@@ -135,8 +138,9 @@ class RustyNativeSessionApi
       sampling_mode: if Number(temperature) > 0 and Number(topK) > 0 then 'sampled_top_k' else 'greedy'
 
   freeSession: (session) ->
-    @sessionTokenizers.delete session
-    await @value 'free_native_session', session: session
+    sessionHandle = if typeof session is 'string' then session else session.session
+    @sessionTokenizers.delete sessionHandle
+    await @value 'free_native_session', session: sessionHandle
 
   shutdown: ->
     return unless @bridge?

@@ -68,6 +68,28 @@ Current probe and test shape:
   just to compare timings. Keep the promoted source-of-truth path in smoke,
   log recorded baseline timings/results as metadata, and reserve old-vs-new
   execution for explicit full/comparison profiles or math-contract changes.
+- runtime tests follow the same rule: once a path is disproved, record it and
+  stop running it in normal development. For current Rusty generation:
+  - `chunked_expanded_kv` is the active default attention backend
+  - full preallocated `expanded_kv` is diagnostic/benchmark-only
+  - `compact_cpu` attention is fallback/diagnostic-only
+  - `RUSTY_EXPERIMENTAL_MLX_RESIDENT_BLOCK=1` is diagnostic-only: it is
+    correct but slower on the long default prompt (`222,298 ms`, `3.07 tok/s`)
+    than the default path (`121,122 ms`, `5.64 tok/s`), with matching token
+    IDs/text through EOS and no fallbacks
+  - `RUSTY_RESIDENT_O_RESIDUAL=1` is also diagnostic-only: it looked promising
+    on a 16-token run, but the long default prompt regressed from `129,883 ms`
+    (`5.26 tok/s`) to `250,638 ms` (`2.73 tok/s`) with matching output and no
+    fallbacks
+  - `RUSTY_RESIDENT_MLP_ONLY=1` is the current best narrow resident gate on
+    the long default prompt: it matched output through EOS and improved one
+    comparison run from `155,502 ms` (`4.39 tok/s`) to `124,093 ms`
+    (`5.50 tok/s`) with no fallbacks. Follow-up inspection showed this was not
+    a distinct execution path in the MLX-native decode path; the resident MLP
+    chain is already the default. Treat `RUSTY_RESIDENT_MLP_ONLY` as deprecated
+    reporting/no-op, and use `mlx_resident_mlp_chain_default_path` for the
+    actual state.
+  - recorded long-generation baselines are in `rusty/STATUS.md`
 - `rusty/test_tensor_group.sh`
   - Q/A-style CLI compliance probe for a single tensor group
   - prints each question before sending the bridge request
@@ -80,14 +102,12 @@ Current probe and test shape:
   - no model build or inference path is implied by the test
 
 Current status:
-- verifier-only resident bridge scaffold with real model4 metadata, selected
-  tensor-group residency, structural KV cache, and CPU/provisional full-stack
-  Qwen3 arithmetic
-- not integrated into live `meta/`
-- not wired into production recipes
-- not production generation
-- no optimized KV-cache attention kernel yet
-- no Metal-native quantized matmul yet
+- Rusty native generation is wired through the prompt recipe path and JS/Coffee
+  wrappers via opaque handles
+- Qwen math parity is corrected with q_norm/k_norm before RoPE
+- tokenizer/chat formatting handles Qwen special tokens and newlines
+- default attention backend is chunked expanded K/V on MLX/Metal
+- CPU and full-expanded K/V paths remain available only as diagnostics
 - the CLI probe style should be explicit Q/A, not silent answers-only output
 - active promoted smoke decode flags:
   - optimized row-block quantized linear

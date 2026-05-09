@@ -19,6 +19,7 @@ repeatLoop =
 UI_CONTROL_PATH = path.join(CWD, 'state', 'ui-control.json')
 CONTROL_OVERRIDE_PATH = path.join(CWD, 'control_override.yaml')
 OVERRIDE_PATH = path.join(CWD, 'override.yaml')
+OVERRIDE_DIR = path.join(CWD, 'override')
 MERGE_RUN_PATH = path.join(CWD, 'state', 'merge-run.json')
 
 readJson = (p, fallback = null) ->
@@ -417,13 +418,34 @@ collectStepStates = ->
   rows.sort (a, b) ->
     String(a.step ? '').localeCompare String(b.step ? '')
 
-readOverride = ->
+overridePathForPipeline = (pipelineName) ->
+  name = String(pipelineName ? '').trim()
+  return OVERRIDE_PATH unless name.length
+  path.join OVERRIDE_DIR, "#{name}.yaml"
+
+readLegacyOverride = ->
+  parsed = if fs.existsSync(OVERRIDE_PATH)
+    try yaml.load(fs.readFileSync(OVERRIDE_PATH, 'utf8')) ? {} catch then {}
+  else
+    {}
+  parsed = {} unless parsed? and typeof parsed is 'object' and not Array.isArray(parsed)
+  parsed
+
+readOverride = (pipelineName = null) ->
   foundational = {}
   pipeName = workspacePipeName(CWD)
   inferredModel = inferModelIdFromPipeName(pipeName)
+  legacy = readLegacyOverride()
+  selectedPipeline = String(pipelineName ? '').trim()
+  selectedPipeline = String(legacy.pipeline ? '').trim() unless selectedPipeline.length
+  selectedPath = overridePathForPipeline selectedPipeline
 
-  parsed = if fs.existsSync(OVERRIDE_PATH)
-    try yaml.load(fs.readFileSync(OVERRIDE_PATH, 'utf8')) ? {} catch then {}
+  materializedFromLegacy = false
+  parsed = if fs.existsSync(selectedPath)
+    try yaml.load(fs.readFileSync(selectedPath, 'utf8')) ? {} catch then {}
+  else if fs.existsSync(OVERRIDE_PATH)
+    materializedFromLegacy = selectedPipeline.length > 0
+    Object.assign {}, legacy
   else
     {}
 
@@ -437,8 +459,12 @@ readOverride = ->
       parsed.run.model = inferredModel
       needsWrite = true
 
-  if needsWrite or (inferredModel.length and not fs.existsSync(OVERRIDE_PATH))
-    writeText OVERRIDE_PATH, dumpYaml(parsed)
+  if selectedPipeline.length and not parsed.pipeline?
+    parsed.pipeline = selectedPipeline
+    needsWrite = true
+
+  if materializedFromLegacy or needsWrite or (inferredModel.length and not fs.existsSync(selectedPath))
+    writeText selectedPath, dumpYaml(parsed)
 
   parsed
 
@@ -457,11 +483,12 @@ readYaml = (p) ->
   try yaml.load(fs.readFileSync(target, 'utf8')) ? {} catch then {}
 
 buildControls = ->
-  override = readOverride()
   controlOverride = readControlOverride()
   uiControl = readUiControl()
   pending = uiControl.pending ? {}
-  pipelineName = pending.pipeline ? controlOverride.pipeline ? override.pipeline ? ''
+  legacyOverride = readLegacyOverride()
+  pipelineName = pending.pipeline ? controlOverride.pipeline ? legacyOverride.pipeline ? ''
+  override = readOverride(pipelineName)
   recipe = readRecipe(pipelineName)
   libraryDoc = readYaml path.join(EXEC_ROOT, 'data', 'jim_story_library.yaml')
   library = libraryDoc?.library ? {}
@@ -491,7 +518,13 @@ buildControls = ->
   else
     dumpYaml overrideObject
   recipeText = if pipelineName.length then dumpYaml(recipe) else ''
-  humanOverrideText = if fs.existsSync(path.join(CWD, 'override.yaml')) then readText(path.join(CWD, 'override.yaml'), '') else ''
+  humanOverridePath = overridePathForPipeline pipelineName
+  humanOverrideText = if fs.existsSync(humanOverridePath)
+    readText humanOverridePath, ''
+  else if fs.existsSync(OVERRIDE_PATH)
+    readText OVERRIDE_PATH, ''
+  else
+    ''
   experimentText = if fs.existsSync(path.join(CWD, 'experiment.yaml')) then readText(path.join(CWD, 'experiment.yaml'), '') else ''
   uiFields = scanUiFields recipe, controlOverride, uiControl
 
@@ -546,9 +579,10 @@ describeOutputFile = (relativePath, runStart = null) ->
   }
 
 collectExpectedOutputs = (run) ->
-  override = readOverride()
   controlOverride = readControlOverride()
-  pipeline = controlOverride.pipeline ? override.pipeline ? run?.pipeline ? null
+  legacyOverride = readLegacyOverride()
+  pipeline = controlOverride.pipeline ? legacyOverride.pipeline ? run?.pipeline ? null
+  override = readOverride(pipeline)
   return { out_files: [], diary_files: collectDiaryFiles(run) } unless pipeline?
 
   configPath = path.join(EXEC_ROOT, 'config', "#{pipeline}.yaml")
@@ -744,8 +778,10 @@ stopRepeatLoop = ->
 buildLaunchPayloadFromControl = ->
   uiControl = readUiControl()
   pending = uiControl.pending ? {}
+  controlOverride = readControlOverride()
+  legacyOverride = readLegacyOverride()
   payload =
-    pipeline: pending.pipeline ? readOverride().pipeline ? ''
+    pipeline: pending.pipeline ? controlOverride.pipeline ? legacyOverride.pipeline ? ''
     continuous: uiControl.continuous is true
     continuous_delay_seconds: normalizeCooldownSeconds(uiControl.continuous_delay_seconds, 60)
 
@@ -757,7 +793,7 @@ buildLaunchPayloadFromControl = ->
 
 buildOverrideObject = (payload) ->
   override = {}
-  pipelineName = String(payload.pipeline ? readOverride().pipeline ? '')
+  pipelineName = String(payload.pipeline ? readLegacyOverride().pipeline ? '')
   recipe = readRecipe(pipelineName)
   recipeStory = recipe?.select_story_recipe ? {}
   override.pipeline = pipelineName
@@ -802,13 +838,17 @@ writeControlOverrideText = (text) ->
 
 writeHumanOverrideText = (text) ->
   trimmed = String(text ? '').trim()
+  controlOverride = readControlOverride()
+  uiControl = readUiControl()
+  pipelineName = String(controlOverride.pipeline ? uiControl?.pending?.pipeline ? readLegacyOverride().pipeline ? '').trim()
+  targetPath = overridePathForPipeline pipelineName
   if trimmed.length is 0
-    parsed = readOverride()
+    parsed = readOverride(pipelineName)
     return parsed
 
-  writeText OVERRIDE_PATH, text
-  parsed = readYaml OVERRIDE_PATH
-  throw new Error 'override.yaml must parse to an object' unless parsed? and typeof parsed is 'object' and not Array.isArray(parsed)
+  writeText targetPath, text
+  parsed = readYaml targetPath
+  throw new Error "#{path.relative(CWD, targetPath)} must parse to an object" unless parsed? and typeof parsed is 'object' and not Array.isArray(parsed)
   pipeName = workspacePipeName(CWD)
   inferredModel = inferModelIdFromPipeName(pipeName)
   if inferredModel.length
@@ -816,7 +856,7 @@ writeHumanOverrideText = (text) ->
     currentModel = String(parsed.run.model ? '').trim()
     if currentModel.length is 0
       parsed.run.model = inferredModel
-      writeText OVERRIDE_PATH, dumpYaml(parsed)
+      writeText targetPath, dumpYaml(parsed)
   parsed
 
 scheduleRepeatLaunch = ->
@@ -1098,11 +1138,13 @@ handleControl = (req, res) ->
 
   pipeline = String(payload.pipeline ? '').trim()
   current = readUiControl()
+  controlOverride = readControlOverride()
+  legacyOverride = readLegacyOverride()
   next =
     continuous: if payload.continuous is true then true else false
     continuous_delay_seconds: normalizeCooldownSeconds(payload.continuous_delay_seconds, normalizeCooldownSeconds(current?.continuous_delay_seconds, 60))
     pending:
-      pipeline: if pipeline.length then pipeline else (current?.pending?.pipeline ? readOverride().pipeline ? '')
+      pipeline: if pipeline.length then pipeline else (current?.pending?.pipeline ? controlOverride.pipeline ? legacyOverride.pipeline ? '')
       scene: String(payload.scene ? '')
       arrival: String(payload.arrival ? '')
       disturbance: String(payload.disturbance ? '')

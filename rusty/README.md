@@ -157,6 +157,19 @@ proven expensive full-stack or generation baselines just to compare timings.
 Recorded baseline result/timing metadata should be reused unless an explicit
 full/comparison profile is selected or a math contract changes.
 
+Normal Rusty development must also avoid rerunning disproved runtime paths just
+to produce a fresh comparison number. Current recorded baselines live in
+`rusty/STATUS.md`; refer to those numbers instead of rerunning:
+
+- full preallocated `expanded_kv` for `max_tokens=2000`
+- `RUSTY_ATTENTION_BACKEND=cpu` / `compact_cpu` long generation
+- explicit MLX/OMP/VECLIB/RAYON thread-count runs at 8 and 12
+- old second-generation proof runs unless `RUSTY_VERIFY_SECOND_GENERATION=1`
+
+The active default generation backend is `chunked_expanded_kv`. Root `test.sh`
+should exercise the current active path unless the human explicitly asks for a
+diagnostic comparison.
+
 Smoke runs:
 
 - backend and MLX discovery

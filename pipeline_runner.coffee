@@ -476,6 +476,26 @@ createExperimentObject = (configPath, overridePath, controlOverridePath = null) 
     merged = deepMerge merged, loadYamlSafe(controlOverridePath)
   return stripUiDirectives(merged)
 
+overridePathForPipeline = (pipelineName) ->
+  name = String(pipelineName ? '').trim()
+  return path.join(CWD, 'override.yaml') unless name.length
+  path.join CWD, 'override', "#{name}.yaml"
+
+resolveOverridePath = (pipelineName) ->
+  recipeOverridePath = overridePathForPipeline pipelineName
+  return recipeOverridePath if fs.existsSync recipeOverridePath
+  legacyPath = path.join CWD, 'override.yaml'
+  if fs.existsSync legacyPath
+    legacy = loadYamlSafe legacyPath
+    if legacy? and typeof legacy is 'object' and not Array.isArray(legacy)
+      name = String(pipelineName ? '').trim()
+      legacy.pipeline ?= name if name.length
+      fs.mkdirSync path.dirname(recipeOverridePath), { recursive: true }
+      fs.writeFileSync recipeOverridePath, yaml.dump(legacy, lineWidth: 120, noRefs: true), 'utf8'
+      return recipeOverridePath
+    return legacyPath
+  recipeOverridePath
+
 normalizeDeps = (d) ->
   return [] unless d?
   return d.slice() if Array.isArray(d)
@@ -961,15 +981,15 @@ main = ->
   M.saveThis "env/HH_MM", process.env.HH_MM if process.env.HH_MM?
   M.saveThis "env/LOGDIR", process.env.LOGDIR if process.env.LOGDIR?
 
-  overridePath = path.join(CWD,'override.yaml')
   controlOverridePath = path.join(CWD,'control_override.yaml')
-  override = loadYamlSafe overridePath
   controlOverride = loadYamlSafe controlOverridePath
-  pipelineName = controlOverride.pipeline ? override.pipeline
+  legacyOverride = loadYamlSafe path.join(CWD, 'override.yaml')
+  pipelineName = controlOverride.pipeline ? legacyOverride.pipeline
   unless pipelineName?
-    console.error "override.yaml/control_override.yaml missing pipeline"
+    console.error "control_override.yaml or legacy override.yaml missing pipeline"
     process.exit(1)
 
+  overridePath = resolveOverridePath pipelineName
   configPath = path.join(EXEC,'config',"#{pipelineName}.yaml")
   experiment = createExperimentObject configPath, overridePath, controlOverridePath
   U.saveRun

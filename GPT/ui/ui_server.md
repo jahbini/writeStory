@@ -26,12 +26,15 @@ Current control model:
   - `UI_textarea`
 - UI-backed values are stored in `state/ui-control.json`
 - effective run control is materialized to `control_override.yaml`
-- foundational model identity still belongs in `override.yaml`
+- human overrides are recipe-scoped under `override/<pipeline>.yaml`
+- legacy `override.yaml` is only a fallback/bootstrap source and should be
+  copied forward into `override/<pipeline>.yaml` when selected
 
 Pipe/workspace rules:
 - the active UI is pipe-local under `CWD`
 - if a pipe-local file exists, prefer it over the repo-top fallback
-- a new empty pipe infers `run.model` from the pipe directory name and materializes `override.yaml` if needed
+- a new empty pipe infers `run.model` from the pipe directory name and
+  materializes the selected recipe override when needed
 
 Polling contract:
 - do one `refresh()` on page load
@@ -47,5 +50,6 @@ Polling contract:
 Known pitfalls:
 - do not silently reintroduce always-on polling
 - do not split `Latest Err` and `Latest Log` into one pane unless explicitly requested
-- do not treat `control_override.yaml` as a substitute for foundational `override.yaml`
+- do not treat `control_override.yaml` as a substitute for
+  `override/<pipeline>.yaml`
 - if a new recipe needs freeform text from the UI, prefer `UI_textarea` over inventing a separate ad hoc endpoint
