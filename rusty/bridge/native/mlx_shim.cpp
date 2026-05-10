@@ -2802,6 +2802,24 @@ bool resident_mlp_only_requested() {
   return env_truthy("RUSTY_RESIDENT_MLP_ONLY");
 }
 
+bool experimental_mlx_logits_topk_enabled() {
+  return !env_truthy("RUSTY_DISABLE_MLX_LOGITS_TOPK");
+}
+
+bool experimental_mlx_qk_norm_rope_enabled() {
+  return !env_truthy("RUSTY_DISABLE_MLX_QK_NORM_ROPE");
+}
+
+bool verify_mlx_qk_norm_rope_enabled() {
+  return env_truthy("RUSTY_VERIFY_MLX_QK_NORM_ROPE");
+}
+
+bool generation_checksum_diagnostics_enabled() {
+  return env_truthy("RUSTY_DEBUG_CHECKSUMS") ||
+         env_truthy("RUSTY_DEBUG_READBACKS") ||
+         env_truthy("RUSTY_VERIFY_CHECKSUMS");
+}
+
 std::string experimental_mlx_attention_mode() {
   const char* raw = std::getenv("RUSTY_ATTENTION_BACKEND");
   if (raw == nullptr) {
@@ -2928,6 +2946,10 @@ thread_local bool mlx_quantized_linear_runtime_fallback_used = false;
 thread_local std::string mlx_quantized_linear_step_context;
 thread_local std::vector<std::string> mlx_quantized_linear_fallback_steps;
 thread_local std::vector<std::string> mlx_decode_readback_reasons;
+thread_local bool mlx_qk_norm_rope_applied_to_generation = false;
+thread_local bool mlx_qk_norm_rope_fallback_used = false;
+thread_local bool mlx_qk_norm_rope_verify_ran = false;
+thread_local double mlx_qk_norm_rope_verify_max_abs_diff = 0.0;
 
 void record_mlx_decode_readback(const std::string& reason) {
   mlx_decode_readback_reasons.push_back(reason);
@@ -3775,6 +3797,147 @@ std::tuple<std::vector<float>, std::vector<float>, std::vector<float>> quantized
 #endif
 }
 
+#if defined(RUSTY_MLX_HAVE_NATIVE_LINK)
+std::tuple<mlx::core::array, mlx::core::array, mlx::core::array> quantized_linear_triple_arrays_from_mlx_input(
+    const TensorGroupRecord& first_record,
+    const TensorGroupRecord& second_record,
+    const TensorGroupRecord& third_record,
+    const mlx::core::array& input_array,
+    const LoraProjectionRecord* first_lora = nullptr,
+    const LoraProjectionRecord* second_lora = nullptr,
+    const LoraProjectionRecord* third_lora = nullptr) {
+  LocalQuantizedMlxArrays first_local;
+  LocalQuantizedMlxArrays second_local;
+  LocalQuantizedMlxArrays third_local;
+  const std::size_t input_width = static_cast<std::size_t>(input_array.size());
+  auto first_result = apply_lora_delta_if_present(
+      make_quantized_matmul_from_mlx_input(first_record, input_array, first_local, input_width),
+      input_array,
+      first_lora);
+  auto second_result = apply_lora_delta_if_present(
+      make_quantized_matmul_from_mlx_input(second_record, input_array, second_local, input_width),
+      input_array,
+      second_lora);
+  auto third_result = apply_lora_delta_if_present(
+      make_quantized_matmul_from_mlx_input(third_record, input_array, third_local, input_width),
+      input_array,
+      third_lora);
+  return {first_result, second_result, third_result};
+}
+
+mlx::core::array rmsnorm_heads_mlx_array(
+    const TensorGroupRecord& record,
+    const mlx::core::array& input,
+    std::size_t heads,
+    std::size_t head_dim,
+    double eps) {
+  const auto weight_it = record.tensors.find("weight");
+  if (weight_it == record.tensors.end()) {
+    throw std::runtime_error("per-head RMSNorm MLX group is missing weight");
+  }
+  if (heads == 0 || head_dim == 0 ||
+      static_cast<std::size_t>(input.size()) != heads * head_dim) {
+    throw std::runtime_error("per-head RMSNorm MLX input shape mismatch");
+  }
+  const auto& weight_tensor = weight_it->second;
+  if (weight_tensor.shape.empty() ||
+      static_cast<std::size_t>(weight_tensor.shape[0]) != head_dim) {
+    throw std::runtime_error("per-head RMSNorm MLX weight size mismatch");
+  }
+  mlx::core::array weight_bf16(
+      reinterpret_cast<const mlx::core::bfloat16_t*>(tensor_payload_data(weight_tensor)),
+      mlx::core::Shape{1, static_cast<int>(head_dim)},
+      mlx::core::bfloat16);
+  auto weight = mlx::core::astype(weight_bf16, mlx::core::float32);
+  auto shaped = mlx::core::reshape(
+      input,
+      mlx::core::Shape{static_cast<int>(heads), static_cast<int>(head_dim)});
+  auto mean_square = mlx::core::mean(mlx::core::square(shaped), 1, true);
+  auto normalized = shaped * mlx::core::rsqrt(mean_square + static_cast<float>(eps)) * weight;
+  return mlx::core::reshape(
+      normalized,
+      mlx::core::Shape{1, static_cast<int>(heads * head_dim)});
+}
+
+mlx::core::array rope_mlx_array(
+    const mlx::core::array& input,
+    std::size_t heads,
+    std::size_t head_dim,
+    std::uint64_t position,
+    double theta) {
+  if (heads == 0 || head_dim == 0 || head_dim % 2 != 0 || theta <= 0.0 ||
+      static_cast<std::size_t>(input.size()) != heads * head_dim) {
+    throw std::runtime_error("RoPE MLX input shape mismatch");
+  }
+  const std::size_t half_dim = head_dim / 2;
+  std::vector<float> cos_values(heads * half_dim, 0.0f);
+  std::vector<float> sin_values(heads * half_dim, 0.0f);
+  for (std::size_t head = 0; head < heads; ++head) {
+    const std::size_t offset = head * half_dim;
+    for (std::size_t i = 0; i < half_dim; ++i) {
+      const double inv_freq =
+          1.0 / std::pow(theta, static_cast<double>(i * 2) / static_cast<double>(head_dim));
+      const double angle = static_cast<double>(position) * inv_freq;
+      cos_values[offset + i] = static_cast<float>(std::cos(angle));
+      sin_values[offset + i] = static_cast<float>(std::sin(angle));
+    }
+  }
+  mlx::core::array cos_array(
+      cos_values.data(),
+      mlx::core::Shape{static_cast<int>(heads), static_cast<int>(half_dim)},
+      mlx::core::float32);
+  mlx::core::array sin_array(
+      sin_values.data(),
+      mlx::core::Shape{static_cast<int>(heads), static_cast<int>(half_dim)},
+      mlx::core::float32);
+  auto shaped = mlx::core::reshape(
+      input,
+      mlx::core::Shape{static_cast<int>(heads), static_cast<int>(head_dim)});
+  auto x1 = mlx::core::slice(
+      shaped,
+      mlx::core::Shape{0, 0},
+      mlx::core::Shape{static_cast<int>(heads), static_cast<int>(half_dim)});
+  auto x2 = mlx::core::slice(
+      shaped,
+      mlx::core::Shape{0, static_cast<int>(half_dim)},
+      mlx::core::Shape{static_cast<int>(heads), static_cast<int>(head_dim)});
+  auto first = x1 * cos_array - x2 * sin_array;
+  auto second = x2 * cos_array + x1 * sin_array;
+  auto rotated = mlx::core::concatenate({first, second}, 1);
+  return mlx::core::reshape(
+      rotated,
+      mlx::core::Shape{1, static_cast<int>(heads * head_dim)});
+}
+
+std::pair<mlx::core::array, mlx::core::array> qk_norm_rope_mlx_arrays(
+    const TensorGroupRecord& q_norm,
+    const TensorGroupRecord& k_norm,
+    const mlx::core::array& q_array,
+    const mlx::core::array& k_array,
+    double eps,
+    std::uint64_t position) {
+  const RopeRuntimeConfig& config = active_rope_config();
+  if (!config.enabled) {
+    return {q_array, k_array};
+  }
+  auto q_normed = rmsnorm_heads_mlx_array(
+      q_norm,
+      q_array,
+      config.num_attention_heads,
+      config.head_dim,
+      eps);
+  auto k_normed = rmsnorm_heads_mlx_array(
+      k_norm,
+      k_array,
+      config.num_key_value_heads,
+      config.head_dim,
+      eps);
+  return {
+      rope_mlx_array(q_normed, config.num_attention_heads, config.head_dim, position, config.theta),
+      rope_mlx_array(k_normed, config.num_key_value_heads, config.head_dim, position, config.theta)};
+}
+#endif
+
 std::vector<std::pair<std::uint64_t, float>> top_logits(
     const std::vector<float>& logits,
     std::size_t count) {
@@ -4110,6 +4273,108 @@ std::pair<std::uint64_t, float> select_next_token_from_logits(
   }
   return top.back();
 }
+
+#if defined(RUSTY_MLX_HAVE_NATIVE_LINK)
+std::vector<std::pair<std::uint64_t, float>> top_logits_from_mlx_array(
+    const mlx::core::array& logits,
+    std::size_t count) {
+  if (count == 0 || logits.size() == 0) {
+    return {};
+  }
+  const int vocab = logits.size();
+  const int k = static_cast<int>(std::min<std::size_t>(count, static_cast<std::size_t>(vocab)));
+  auto sorted_indices = mlx::core::argsort(logits);
+  auto top_indices = mlx::core::slice(
+      sorted_indices,
+      mlx::core::Shape{vocab - k},
+      mlx::core::Shape{vocab});
+  top_indices = mlx::core::astype(top_indices, mlx::core::uint32);
+  auto top_scores = mlx::core::take(logits, top_indices);
+  mlx::core::eval(top_indices, top_scores);
+  mlx::core::synchronize();
+  const std::uint32_t* id_data = top_indices.data<std::uint32_t>();
+  const float* score_data = top_scores.data<float>();
+  std::vector<std::pair<std::uint64_t, float>> out;
+  out.reserve(static_cast<std::size_t>(k));
+  for (int i = 0; i < k; ++i) {
+    out.emplace_back(static_cast<std::uint64_t>(id_data[i]), score_data[i]);
+  }
+  std::sort(
+      out.begin(),
+      out.end(),
+      [](const auto& a, const auto& b) {
+        if (a.second == b.second) {
+          return a.first < b.first;
+        }
+        return a.second > b.second;
+      });
+  return out;
+}
+
+std::pair<std::uint64_t, float> select_next_token_from_mlx_logits(
+    const mlx::core::array& logits) {
+  if (!generation_sampling_config.enabled ||
+      generation_sampling_config.temperature <= 0.0 ||
+      generation_sampling_config.top_k == 0) {
+    auto top_index = mlx::core::argmax(logits);
+    top_index = mlx::core::astype(top_index, mlx::core::uint32);
+    auto top_score = mlx::core::take(logits, top_index);
+    mlx::core::eval(top_index, top_score);
+    mlx::core::synchronize();
+    return {
+        static_cast<std::uint64_t>(*top_index.data<std::uint32_t>()),
+        *top_score.data<float>()};
+  }
+
+  auto top = top_logits_from_mlx_array(
+      logits,
+      std::min<std::size_t>(
+          static_cast<std::size_t>(generation_sampling_config.top_k),
+          static_cast<std::size_t>(logits.size())));
+  if (top.empty()) {
+    return {0, 0.0f};
+  }
+
+  const double temperature = std::max(generation_sampling_config.temperature, 1.0e-6);
+  double max_scaled = -std::numeric_limits<double>::infinity();
+  for (const auto& item : top) {
+    max_scaled = std::max(max_scaled, static_cast<double>(item.second) / temperature);
+  }
+
+  std::vector<double> weights;
+  weights.reserve(top.size());
+  double total_weight = 0.0;
+  for (const auto& item : top) {
+    const double weight = std::exp((static_cast<double>(item.second) / temperature) - max_scaled);
+    weights.push_back(weight);
+    total_weight += weight;
+  }
+  if (!(total_weight > 0.0) || !std::isfinite(total_weight)) {
+    return top[0];
+  }
+
+  std::uniform_real_distribution<double> dist(0.0, total_weight);
+  double draw = dist(generation_sampling_config.rng);
+  for (std::size_t i = 0; i < top.size(); ++i) {
+    if (draw <= weights[i]) {
+      return top[i];
+    }
+    draw -= weights[i];
+  }
+  return top.back();
+}
+
+mlx::core::array logits_array_from_mlx_final_norm(
+    const TensorGroupRecord& embedding,
+    const mlx::core::array& final_norm_mlx) {
+  LocalQuantizedMlxArrays logits_local;
+  return make_quantized_matmul_from_mlx_input(
+      embedding,
+      final_norm_mlx,
+      logits_local,
+      final_norm_mlx.size());
+}
+#endif
 
 std::vector<float> rmsnorm_values(
     const TensorGroupRecord& record,
@@ -5422,6 +5687,72 @@ void mlx_compact_kv_cache_append_chunked(
   }
 }
 
+void mlx_compact_kv_cache_append_chunked_arrays(
+    NativeLayerKvCache& layer_cache,
+    const mlx::core::array& current_k_array,
+    const mlx::core::array& current_v_array,
+    std::size_t kv_heads,
+    std::size_t head_dim,
+    std::size_t chunk_size,
+    double* append_ms = nullptr) {
+  if (chunk_size == 0) {
+    throw std::runtime_error("chunked compact MLX KV cache requires chunk_size");
+  }
+  if (kv_heads == 0 ||
+      static_cast<std::size_t>(current_k_array.size()) != kv_heads * head_dim ||
+      static_cast<std::size_t>(current_v_array.size()) != kv_heads * head_dim) {
+    throw std::runtime_error("chunked compact MLX KV cache array append received invalid k/v shapes");
+  }
+
+  auto start = std::chrono::steady_clock::now();
+  layer_cache.compact_chunk_size = chunk_size;
+  const std::size_t pos = layer_cache.compact_chunk_current_len;
+  const std::size_t chunk_index = pos / chunk_size;
+  const std::size_t pos_in_chunk = pos % chunk_size;
+  if (layer_cache.compact_key_chunks.size() <= chunk_index) {
+    layer_cache.compact_key_chunks.push_back(mlx::core::zeros(
+        mlx::core::Shape{
+            static_cast<int>(kv_heads),
+            static_cast<int>(chunk_size),
+            static_cast<int>(head_dim)},
+        mlx::core::float32));
+    layer_cache.compact_value_chunks.push_back(mlx::core::zeros(
+        mlx::core::Shape{
+            static_cast<int>(kv_heads),
+            static_cast<int>(chunk_size),
+            static_cast<int>(head_dim)},
+        mlx::core::float32));
+  }
+
+  auto current_k = mlx::core::reshape(
+      current_k_array,
+      mlx::core::Shape{static_cast<int>(kv_heads), 1, static_cast<int>(head_dim)});
+  auto current_v = mlx::core::reshape(
+      current_v_array,
+      mlx::core::Shape{static_cast<int>(kv_heads), 1, static_cast<int>(head_dim)});
+  const int pos_i = static_cast<int>(pos_in_chunk);
+  layer_cache.compact_key_chunks[chunk_index] = mlx::core::slice_update(
+      layer_cache.compact_key_chunks[chunk_index],
+      current_k,
+      mlx::core::Shape{0, pos_i, 0},
+      mlx::core::Shape{static_cast<int>(kv_heads), pos_i + 1, static_cast<int>(head_dim)});
+  layer_cache.compact_value_chunks[chunk_index] = mlx::core::slice_update(
+      layer_cache.compact_value_chunks[chunk_index],
+      current_v,
+      mlx::core::Shape{0, pos_i, 0},
+      mlx::core::Shape{static_cast<int>(kv_heads), pos_i + 1, static_cast<int>(head_dim)});
+  if (!defer_chunked_kv_append_sync()) {
+    layer_cache.compact_key_chunks[chunk_index].eval();
+    layer_cache.compact_value_chunks[chunk_index].eval();
+    mlx::core::synchronize();
+  }
+  layer_cache.compact_chunk_current_len += 1;
+  if (append_ms != nullptr) {
+    *append_ms += std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - start).count();
+  }
+}
+
 std::vector<float> mlx_compact_kv_cache_attention_chunked(
     const std::vector<float>& q_values,
     const NativeLayerKvCache& layer_cache,
@@ -5640,6 +5971,112 @@ std::vector<float> mlx_compact_kv_cache_attention_chunk_aware(
     add_elapsed_ms(detail_timing->reshape_flatten_ms, segment_start);
   }
   return attention;
+}
+
+mlx::core::array mlx_compact_kv_cache_attention_chunk_aware_array(
+    const mlx::core::array& q_array_flat,
+    const NativeLayerKvCache& layer_cache,
+    std::size_t q_heads,
+    std::size_t kv_heads,
+    std::size_t head_dim,
+    double* attention_ms = nullptr,
+    MlxAttentionDetailTiming* detail_timing = nullptr) {
+  if (layer_cache.compact_key_chunks.empty() ||
+      layer_cache.compact_value_chunks.empty() ||
+      layer_cache.compact_chunk_current_len == 0 ||
+      layer_cache.compact_chunk_size == 0 ||
+      kv_heads == 0 ||
+      q_heads == 0 ||
+      q_heads % kv_heads != 0 ||
+      static_cast<std::size_t>(q_array_flat.size()) != q_heads * head_dim) {
+    throw std::runtime_error("chunk-aware compact MLX KV attention array received invalid state");
+  }
+  const float inv_sqrt_dim =
+      static_cast<float>(1.0 / std::sqrt(static_cast<double>(head_dim)));
+  const int q_heads_i = static_cast<int>(q_heads);
+  const int head_dim_i = static_cast<int>(head_dim);
+  const int kv_heads_i = static_cast<int>(kv_heads);
+  const int q_heads_per_kv = static_cast<int>(q_heads / kv_heads);
+  auto start = std::chrono::steady_clock::now();
+  auto segment_start = std::chrono::steady_clock::now();
+  auto q_array = mlx::core::reshape(
+      q_array_flat,
+      mlx::core::Shape{q_heads_i, 1, head_dim_i});
+
+  std::optional<mlx::core::array> global_max;
+  std::optional<mlx::core::array> denom;
+  std::optional<mlx::core::array> numerator;
+  const std::size_t chunk_size = layer_cache.compact_chunk_size;
+  std::size_t remaining = layer_cache.compact_chunk_current_len;
+  for (std::size_t chunk = 0; chunk < layer_cache.compact_key_chunks.size() && remaining > 0; ++chunk) {
+    const std::size_t take = std::min(chunk_size, remaining);
+    mlx::core::array key_compact = mlx::core::slice(
+        layer_cache.compact_key_chunks[chunk],
+        mlx::core::Shape{0, 0, 0},
+        mlx::core::Shape{kv_heads_i, static_cast<int>(take), head_dim_i});
+    mlx::core::array value_compact = mlx::core::slice(
+        layer_cache.compact_value_chunks[chunk],
+        mlx::core::Shape{0, 0, 0},
+        mlx::core::Shape{kv_heads_i, static_cast<int>(take), head_dim_i});
+    mlx::core::array key_view = mlx::core::repeat(key_compact, q_heads_per_kv, 0);
+    mlx::core::array value_view = mlx::core::repeat(value_compact, q_heads_per_kv, 0);
+    if (detail_timing != nullptr) {
+      add_elapsed_ms(detail_timing->kv_view_assembly_ms, segment_start);
+    }
+
+    segment_start = std::chrono::steady_clock::now();
+    auto scores =
+        mlx::core::matmul(q_array, mlx::core::transpose(key_view, {0, 2, 1})) *
+        inv_sqrt_dim;
+    auto local_max = mlx::core::max(scores, -1, true);
+    if (detail_timing != nullptr) {
+      add_elapsed_ms(detail_timing->score_matmul_ms, segment_start);
+    }
+
+    segment_start = std::chrono::steady_clock::now();
+    auto local_exp = mlx::core::exp(scores - local_max);
+    auto local_denom = mlx::core::sum(local_exp, -1, true);
+    if (detail_timing != nullptr) {
+      add_elapsed_ms(detail_timing->softmax_ms, segment_start);
+    }
+
+    segment_start = std::chrono::steady_clock::now();
+    auto local_numerator = mlx::core::matmul(local_exp, value_view);
+    if (detail_timing != nullptr) {
+      add_elapsed_ms(detail_timing->value_mix_matmul_ms, segment_start);
+    }
+
+    if (!global_max.has_value()) {
+      global_max = local_max;
+      denom = local_denom;
+      numerator = local_numerator;
+    } else {
+      auto next_max = mlx::core::maximum(*global_max, local_max);
+      auto old_scale = mlx::core::exp(*global_max - next_max);
+      auto new_scale = mlx::core::exp(local_max - next_max);
+      denom = (*denom * old_scale) + (local_denom * new_scale);
+      numerator = (*numerator * old_scale) + (local_numerator * new_scale);
+      global_max = next_max;
+    }
+    remaining -= take;
+    segment_start = std::chrono::steady_clock::now();
+  }
+  if (!denom.has_value() || !numerator.has_value()) {
+    throw std::runtime_error("chunk-aware compact MLX KV attention array produced no chunks");
+  }
+  auto mixed = *numerator / *denom;
+  segment_start = std::chrono::steady_clock::now();
+  auto flattened = mlx::core::reshape(
+      mixed,
+      mlx::core::Shape{1, static_cast<int>(q_heads * head_dim)});
+  if (detail_timing != nullptr) {
+    add_elapsed_ms(detail_timing->reshape_flatten_ms, segment_start);
+  }
+  if (attention_ms != nullptr) {
+    *attention_ms += std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - start).count();
+  }
+  return flattened;
 }
 
 mlx::core::array mlx_expanded_kv_cache_attention_chunked_array(
@@ -6496,6 +6933,9 @@ std::vector<float> layer_attention_residual_resident_incremental_from_input(
   std::vector<float> q_values;
   std::vector<float> k_values;
   std::vector<float> v_values;
+  std::optional<mlx::core::array> q_mlx_after_rope;
+  std::optional<mlx::core::array> k_mlx_after_rope;
+  std::optional<mlx::core::array> v_mlx;
   MlxQuantizedLinearStepScope qkv_scope("qkv");
   if (use_optimized_linear &&
       use_layout_cached_linear &&
@@ -6613,34 +7053,124 @@ ResidentDecodeValue layer_decode_value_resident_incremental_from_input(
   std::vector<float> q_values;
   std::vector<float> k_values;
   std::vector<float> v_values;
+  std::optional<mlx::core::array> q_mlx_after_rope;
+  std::optional<mlx::core::array> k_mlx_after_rope;
+  std::optional<mlx::core::array> v_mlx;
   MlxQuantizedLinearStepScope qkv_scope("qkv");
+  auto qk_norm_rope_start = std::chrono::steady_clock::now();
+  const std::uint64_t rope_position = layer_kv_cache_len(kv_cache.layers[layer]);
+  bool qk_norm_rope_done_on_mlx = false;
   try {
-    auto qkv = quantized_linear_triple_values_from_mlx_input(
-        groups.q_proj,
-        groups.k_proj,
-        groups.v_proj,
-        input_norm,
-        lora_layer == nullptr ? nullptr : &lora_layer->q_proj,
-        lora_layer == nullptr ? nullptr : &lora_layer->k_proj,
-        lora_layer == nullptr ? nullptr : &lora_layer->v_proj);
-    q_values = std::move(std::get<0>(qkv));
-    k_values = std::move(std::get<1>(qkv));
-    v_values = std::move(std::get<2>(qkv));
+    if (experimental_mlx_qk_norm_rope_enabled()) {
+      auto qkv_arrays = quantized_linear_triple_arrays_from_mlx_input(
+          groups.q_proj,
+          groups.k_proj,
+          groups.v_proj,
+          input_norm,
+          lora_layer == nullptr ? nullptr : &lora_layer->q_proj,
+          lora_layer == nullptr ? nullptr : &lora_layer->k_proj,
+          lora_layer == nullptr ? nullptr : &lora_layer->v_proj);
+      auto qk_arrays = qk_norm_rope_mlx_arrays(
+          groups.q_norm,
+          groups.k_norm,
+          std::get<0>(qkv_arrays),
+          std::get<1>(qkv_arrays),
+          eps,
+          rope_position);
+      auto q_array = qk_arrays.first;
+      auto k_array = qk_arrays.second;
+      auto v_array = std::get<2>(qkv_arrays);
+      if (verify_mlx_qk_norm_rope_enabled()) {
+        mlx::core::eval(q_array, k_array, v_array);
+        mlx::core::synchronize();
+      }
+      if (q_array.size() != static_cast<int>(groups.q_proj.quantized_rows) ||
+          k_array.size() != static_cast<int>(groups.k_proj.quantized_rows) ||
+          v_array.size() != static_cast<int>(groups.v_proj.quantized_rows)) {
+        throw std::runtime_error("MLX q/k norm RoPE qkv output length mismatch");
+      }
+      mlx_qk_norm_rope_applied_to_generation = true;
+      if (verify_mlx_qk_norm_rope_enabled()) {
+        const float* q_data = q_array.data<float>();
+        const float* k_data = k_array.data<float>();
+        const float* v_data = v_array.data<float>();
+        q_values.assign(q_data, q_data + groups.q_proj.quantized_rows);
+        k_values.assign(k_data, k_data + groups.k_proj.quantized_rows);
+        v_values.assign(v_data, v_data + groups.v_proj.quantized_rows);
+        record_mlx_decode_readback("qkv_after_mlx_qk_norm_rope_verify");
+        auto cpu_qkv = quantized_linear_triple_values_from_mlx_input(
+            groups.q_proj,
+            groups.k_proj,
+            groups.v_proj,
+            input_norm,
+            lora_layer == nullptr ? nullptr : &lora_layer->q_proj,
+            lora_layer == nullptr ? nullptr : &lora_layer->k_proj,
+            lora_layer == nullptr ? nullptr : &lora_layer->v_proj);
+        std::vector<float> cpu_q = std::move(std::get<0>(cpu_qkv));
+        std::vector<float> cpu_k = std::move(std::get<1>(cpu_qkv));
+        apply_qk_norm_in_place(groups.q_norm, groups.k_norm, cpu_q, cpu_k, eps);
+        apply_active_rope_to_qk(cpu_q, cpu_k, rope_position);
+        if (cpu_q.size() != q_values.size() || cpu_k.size() != k_values.size()) {
+          throw std::runtime_error("MLX q/k norm RoPE verification shape mismatch");
+        }
+        double max_diff = 0.0;
+        for (std::size_t i = 0; i < q_values.size(); ++i) {
+          max_diff = std::max(
+              max_diff,
+              std::abs(static_cast<double>(q_values[i]) - static_cast<double>(cpu_q[i])));
+        }
+        for (std::size_t i = 0; i < k_values.size(); ++i) {
+          max_diff = std::max(
+              max_diff,
+              std::abs(static_cast<double>(k_values[i]) - static_cast<double>(cpu_k[i])));
+        }
+        mlx_qk_norm_rope_verify_ran = true;
+        mlx_qk_norm_rope_verify_max_abs_diff =
+            std::max(mlx_qk_norm_rope_verify_max_abs_diff, max_diff);
+      }
+      q_mlx_after_rope.emplace(std::move(q_array));
+      k_mlx_after_rope.emplace(std::move(k_array));
+      v_mlx.emplace(std::move(v_array));
+      qk_norm_rope_done_on_mlx = true;
+    }
   } catch (...) {
+    mlx_qk_norm_rope_fallback_used = true;
     record_mlx_quantized_linear_fallback_step();
-    std::vector<float> input_norm_values =
-        ResidentDecodeValue(input_norm).cpu("qkv_cpu_fallback_input_norm");
-    q_values = quantized_linear_vector_values_layout_cached(groups.q_proj, input_norm_values);
-    k_values = quantized_linear_vector_values_layout_cached(groups.k_proj, input_norm_values);
-    v_values = quantized_linear_vector_values_layout_cached(groups.v_proj, input_norm_values);
+    q_values.clear();
+    k_values.clear();
+    v_values.clear();
+    qk_norm_rope_done_on_mlx = false;
+  }
+  if (!qk_norm_rope_done_on_mlx &&
+      (q_values.empty() || k_values.empty() || v_values.empty())) {
+    try {
+      auto qkv = quantized_linear_triple_values_from_mlx_input(
+          groups.q_proj,
+          groups.k_proj,
+          groups.v_proj,
+          input_norm,
+          lora_layer == nullptr ? nullptr : &lora_layer->q_proj,
+          lora_layer == nullptr ? nullptr : &lora_layer->k_proj,
+          lora_layer == nullptr ? nullptr : &lora_layer->v_proj);
+      q_values = std::move(std::get<0>(qkv));
+      k_values = std::move(std::get<1>(qkv));
+      v_values = std::move(std::get<2>(qkv));
+    } catch (...) {
+      record_mlx_quantized_linear_fallback_step();
+      std::vector<float> input_norm_values =
+          ResidentDecodeValue(input_norm).cpu("qkv_cpu_fallback_input_norm");
+      q_values = quantized_linear_vector_values_layout_cached(groups.q_proj, input_norm_values);
+      k_values = quantized_linear_vector_values_layout_cached(groups.k_proj, input_norm_values);
+      v_values = quantized_linear_vector_values_layout_cached(groups.v_proj, input_norm_values);
+    }
   }
   if (timing != nullptr) {
     add_elapsed_ms(timing->qkv_projection_ms, qkv_start);
   }
-  auto qk_norm_rope_start = std::chrono::steady_clock::now();
-  apply_qk_norm_in_place(groups.q_norm, groups.k_norm, q_values, k_values, eps);
-  const std::uint64_t rope_position = layer_kv_cache_len(kv_cache.layers[layer]);
-  apply_active_rope_to_qk(q_values, k_values, rope_position);
+  if (!qk_norm_rope_done_on_mlx) {
+    apply_qk_norm_in_place(groups.q_norm, groups.k_norm, q_values, k_values, eps);
+    apply_active_rope_to_qk(q_values, k_values, rope_position);
+  }
   if (timing != nullptr) {
     add_elapsed_ms(timing->qk_norm_rope_ms, qk_norm_rope_start);
   }
@@ -6748,6 +7278,131 @@ ResidentDecodeValue layer_decode_value_resident_incremental_from_input(
         timing->per_layer_attention_fallback_reasons.push_back("unknown_exception");
       }
       record_mlx_quantized_linear_fallback_step();
+    }
+  }
+
+  if (qk_norm_rope_done_on_mlx &&
+      q_mlx_after_rope.has_value() &&
+      k_mlx_after_rope.has_value() &&
+      v_mlx.has_value() &&
+      experimental_mlx_attention_mode() == "chunked_compact_mlx") {
+    try {
+      double append_ms = 0.0;
+      MlxAttentionDetailTiming attention_detail_timing;
+      double attention_ms = 0.0;
+      mlx_compact_kv_cache_append_chunked_arrays(
+          kv_cache.layers[layer],
+          *k_mlx_after_rope,
+          *v_mlx,
+          active_rope_config().num_key_value_heads,
+          active_rope_config().head_dim,
+          expanded_kv_chunk_size(),
+          &append_ms);
+      auto attention_array = mlx_compact_kv_cache_attention_chunk_aware_array(
+          *q_mlx_after_rope,
+          kv_cache.layers[layer],
+          active_rope_config().num_attention_heads,
+          active_rope_config().num_key_value_heads,
+          active_rope_config().head_dim,
+          &attention_ms,
+          &attention_detail_timing);
+
+      auto o_start = std::chrono::steady_clock::now();
+      LocalQuantizedMlxArrays o_local;
+      auto o_result = make_quantized_matmul_from_mlx_input(
+          groups.o_proj,
+          attention_array,
+          o_local,
+          attention_array.size());
+      o_result = apply_lora_delta_if_present(
+          o_result,
+          attention_array,
+          lora_layer == nullptr ? nullptr : &lora_layer->o_proj);
+      auto attention_residual = o_result + input_value.mlx;
+      double o_ms = std::chrono::duration<double, std::milli>(
+          std::chrono::steady_clock::now() - o_start).count();
+
+      auto post_norm = rmsnorm_mlx_array(groups.post_attention_norm, attention_residual, eps);
+      MlxResidentMlpChainTiming mlp_timing;
+      auto mlp_residual = quantized_linear_mlp_chain_residual_mlx(
+          groups.gate_proj,
+          groups.up_proj,
+          groups.down_proj,
+          post_norm,
+          attention_residual,
+          &mlp_timing,
+          lora_layer == nullptr ? nullptr : &lora_layer->gate_proj,
+          lora_layer == nullptr ? nullptr : &lora_layer->up_proj,
+          lora_layer == nullptr ? nullptr : &lora_layer->down_proj);
+
+      kv_cache.layers_allocated = std::max<std::uint64_t>(
+          kv_cache.layers_allocated,
+          static_cast<std::uint64_t>(kv_cache.layers.size()));
+      ChunkedExpandedKvCache layer_cache(kv_cache.layers[layer]);
+      kv_cache.positions_stored = std::max<std::uint64_t>(
+          kv_cache.positions_stored,
+          layer_cache.len());
+
+      if (timing != nullptr) {
+        timing->kv_append_ms += append_ms;
+        timing->attention_value_mix_ms += attention_ms;
+        timing->attention_kv_view_assembly_ms += attention_detail_timing.kv_view_assembly_ms;
+        timing->attention_score_matmul_ms += attention_detail_timing.score_matmul_ms;
+        timing->attention_softmax_detail_ms += attention_detail_timing.softmax_ms;
+        timing->attention_value_mix_matmul_ms += attention_detail_timing.value_mix_matmul_ms;
+        timing->attention_reshape_flatten_ms += attention_detail_timing.reshape_flatten_ms;
+        timing->attention_eval_sync_ms += attention_detail_timing.eval_sync_ms + mlp_timing.down_eval_ms;
+        timing->o_projection_ms += o_ms;
+        timing->gate_up_projection_ms += mlp_timing.gate_up_eval_ms + mlp_timing.setup_ms;
+        timing->gate_up_activation_ms += mlp_timing.activation_eval_ms;
+        timing->down_projection_ms += mlp_timing.down_eval_ms;
+        timing->per_layer_attention_ms.push_back(attention_ms);
+        timing->per_layer_attention_backends.push_back("mlx_qk_norm_rope_chunked_compact_mlx");
+        timing->per_layer_attention_fallback_reasons.push_back("");
+        timing->gate_backend = "metal";
+        timing->up_backend = "metal";
+        timing->activation_backend = "metal";
+      }
+      return ResidentDecodeValue(mlp_residual);
+    } catch (const std::exception& e) {
+      mlx_qk_norm_rope_fallback_used = true;
+      if (timing != nullptr) {
+        timing->per_layer_attention_fallback_reasons.push_back(e.what());
+      }
+      record_mlx_quantized_linear_fallback_step();
+    } catch (...) {
+      mlx_qk_norm_rope_fallback_used = true;
+      if (timing != nullptr) {
+        timing->per_layer_attention_fallback_reasons.push_back("unknown_exception");
+      }
+      record_mlx_quantized_linear_fallback_step();
+    }
+  }
+
+  if (q_values.empty() || k_values.empty() || v_values.empty()) {
+    try {
+      auto qkv = quantized_linear_triple_values_from_mlx_input(
+          groups.q_proj,
+          groups.k_proj,
+          groups.v_proj,
+          input_norm,
+          lora_layer == nullptr ? nullptr : &lora_layer->q_proj,
+          lora_layer == nullptr ? nullptr : &lora_layer->k_proj,
+          lora_layer == nullptr ? nullptr : &lora_layer->v_proj);
+      q_values = std::move(std::get<0>(qkv));
+      k_values = std::move(std::get<1>(qkv));
+      v_values = std::move(std::get<2>(qkv));
+      apply_qk_norm_in_place(groups.q_norm, groups.k_norm, q_values, k_values, eps);
+      apply_active_rope_to_qk(q_values, k_values, rope_position);
+    } catch (...) {
+      record_mlx_quantized_linear_fallback_step();
+      std::vector<float> input_norm_values =
+          ResidentDecodeValue(input_norm).cpu("qkv_cpu_fallback_input_norm");
+      q_values = quantized_linear_vector_values_layout_cached(groups.q_proj, input_norm_values);
+      k_values = quantized_linear_vector_values_layout_cached(groups.k_proj, input_norm_values);
+      v_values = quantized_linear_vector_values_layout_cached(groups.v_proj, input_norm_values);
+      apply_qk_norm_in_place(groups.q_norm, groups.k_norm, q_values, k_values, eps);
+      apply_active_rope_to_qk(q_values, k_values, rope_position);
     }
   }
 
@@ -10363,6 +11018,10 @@ const char* rusty_mlx_fastsmoke_generation_probe_json(
 
     mlx_quantized_linear_runtime_fallback_used = false;
     mlx_quantized_linear_fallback_steps.clear();
+    mlx_qk_norm_rope_applied_to_generation = false;
+    mlx_qk_norm_rope_fallback_used = false;
+    mlx_qk_norm_rope_verify_ran = false;
+    mlx_qk_norm_rope_verify_max_abs_diff = 0.0;
     const auto prompt_start = std::chrono::steady_clock::now();
     ResidentDecodeResult prompt_result;
     ResidentDecodeValue current_value(mlx_array_from_vector(
@@ -10404,9 +11063,14 @@ const char* rusty_mlx_fastsmoke_generation_probe_json(
     fallback_steps_per_token.reserve(static_cast<std::size_t>(generated_tokens));
 
     std::uint64_t decode_token = 0;
+    const bool collect_generation_checksums = generation_checksum_diagnostics_enabled();
     double last_final_norm_checksum = 0.0;
     double first_generated_final_norm_checksum = 0.0;
+    bool final_norm_checksum_available = false;
+    bool first_generated_final_norm_checksum_available = false;
     std::size_t last_logits_len = 0;
+    bool mlx_logits_topk_applied_to_generation = false;
+    bool mlx_logits_topk_fallback_used = false;
     std::vector<std::pair<std::uint64_t, float>> first_generated_top_logits;
     bool stopped = false;
     std::string stop_reason = "max_tokens";
@@ -10471,22 +11135,73 @@ const char* rusty_mlx_fastsmoke_generation_probe_json(
       }
       auto final_norm_start = std::chrono::steady_clock::now();
       auto final_norm_mlx = rmsnorm_mlx_array(final_norm, current_value.mlx, eps);
-      std::vector<float> final_norm_values =
-          ResidentDecodeValue(final_norm_mlx).cpu("final_checksum_and_logits");
       add_elapsed_ms(incremental_result.final_norm_ms, final_norm_start);
-      last_final_norm_checksum = vector_checksum(final_norm_values);
-      if (step == 0) {
-        first_generated_final_norm_checksum = last_final_norm_checksum;
+      std::vector<float> final_norm_values;
+      bool final_norm_values_loaded = false;
+      auto load_final_norm_values = [&](const std::string& reason) -> const std::vector<float>& {
+        if (!final_norm_values_loaded) {
+          final_norm_values = ResidentDecodeValue(final_norm_mlx).cpu(reason);
+          final_norm_values_loaded = true;
+        }
+        return final_norm_values;
+      };
+      if (collect_generation_checksums) {
+        const auto& checksum_values = load_final_norm_values("final_checksum_debug");
+        last_final_norm_checksum = vector_checksum(checksum_values);
+        final_norm_checksum_available = true;
+        if (step == 0) {
+          first_generated_final_norm_checksum = last_final_norm_checksum;
+          first_generated_final_norm_checksum_available = true;
+        }
       }
 
       std::uint64_t top_token_id = 0;
       float top_token_score = 0.0f;
       std::size_t logits_len = 0;
+      bool token_selected = false;
       auto logits_start = std::chrono::steady_clock::now();
-      if (use_logits_top1_optimized && mlx_quantized_linear_available) {
+      if (experimental_mlx_logits_topk_enabled() &&
+          use_logits_top1_optimized &&
+          mlx_quantized_linear_available) {
         try {
           MlxQuantizedLinearStepScope logits_scope("logits/top1");
-          std::vector<float> logits = quantized_linear_vector_values_mlx(embedding, final_norm_values);
+          auto logits_array = logits_array_from_mlx_final_norm(embedding, final_norm_mlx);
+          auto selected = select_next_token_from_mlx_logits(logits_array);
+          if (step == 0) {
+            first_generated_top_logits = top_logits_from_mlx_array(logits_array, 10);
+          }
+          top_token_id = selected.first;
+          top_token_score = selected.second;
+          logits_len = static_cast<std::size_t>(logits_array.size());
+          token_selected = true;
+          mlx_logits_topk_applied_to_generation = true;
+          record_mlx_decode_readback("logits/topk_ids_scores");
+          if (top_token_id == previous_generated_token) {
+            repeated_token_streak_current += 1;
+          } else {
+            repeated_token_streak_current = 1;
+          }
+          repeated_token_streak_max =
+              std::max(repeated_token_streak_max, repeated_token_streak_current);
+          previous_generated_token = top_token_id;
+          if (top_token_id < 100) {
+            low_id_token_count_so_far += 1;
+          }
+          if (token_is_numeric_or_low_id(top_token_id)) {
+            numeric_token_count_so_far += 1;
+          }
+        } catch (...) {
+          mlx_logits_topk_fallback_used = true;
+          record_mlx_quantized_linear_fallback_step();
+        }
+      }
+      if (!token_selected &&
+          use_logits_top1_optimized && mlx_quantized_linear_available) {
+        try {
+          MlxQuantizedLinearStepScope logits_scope("logits/top1");
+          const auto& logits_input_values =
+              load_final_norm_values("final_logits_input_cpu_path");
+          std::vector<float> logits = quantized_linear_vector_values_mlx(embedding, logits_input_values);
           auto selected = select_next_token_from_logits(logits);
           if (logits.empty()) {
             output = "{\"ok\":false,\"error\":\"bad_args\",\"message\":\"no logits produced\"}";
@@ -10525,7 +11240,9 @@ const char* rusty_mlx_fastsmoke_generation_probe_json(
           }
         } catch (...) {
           record_mlx_quantized_linear_fallback_step();
-          auto top = quantized_linear_top1_layout_cached(embedding, final_norm_values);
+          const auto& logits_input_values =
+              load_final_norm_values("final_logits_input_cpu_fallback");
+          auto top = quantized_linear_top1_layout_cached(embedding, logits_input_values);
           top_token_id = top.first;
           top_token_score = top.second;
           logits_len = embedding.quantized_output_len;
@@ -10544,8 +11261,10 @@ const char* rusty_mlx_fastsmoke_generation_probe_json(
             numeric_token_count_so_far += 1;
           }
         }
-      } else {
-        auto top = quantized_linear_top1_layout_cached(embedding, final_norm_values);
+      } else if (!token_selected) {
+        const auto& logits_input_values =
+            load_final_norm_values("final_logits_input_cpu_fallback");
+        auto top = quantized_linear_top1_layout_cached(embedding, logits_input_values);
         top_token_id = top.first;
         top_token_score = top.second;
         logits_len = embedding.quantized_output_len;
@@ -12129,6 +12848,22 @@ const char* rusty_mlx_fastsmoke_generation_probe_json(
              << "\"mlx_quantized_linear_available\":" << (mlx_quantized_linear_available ? "true" : "false") << ","
              << "\"mlx_quantized_linear_applied_to_generation\":"
              << ((mlx_quantized_linear_available && !any_fallback && use_optimized_linear) ? "true" : "false") << ","
+             << "\"experimental_mlx_logits_topk_enabled\":"
+             << (experimental_mlx_logits_topk_enabled() ? "true" : "false") << ","
+             << "\"mlx_logits_topk_applied_to_generation\":"
+             << (mlx_logits_topk_applied_to_generation ? "true" : "false") << ","
+             << "\"mlx_logits_topk_fallback_used\":"
+             << (mlx_logits_topk_fallback_used ? "true" : "false") << ","
+             << "\"experimental_mlx_qk_norm_rope_enabled\":"
+             << (experimental_mlx_qk_norm_rope_enabled() ? "true" : "false") << ","
+             << "\"mlx_qk_norm_rope_applied_to_generation\":"
+             << (mlx_qk_norm_rope_applied_to_generation ? "true" : "false") << ","
+             << "\"mlx_qk_norm_rope_fallback_used\":"
+             << (mlx_qk_norm_rope_fallback_used ? "true" : "false") << ","
+             << "\"mlx_qk_norm_rope_verify_ran\":"
+             << (mlx_qk_norm_rope_verify_ran ? "true" : "false") << ","
+             << "\"mlx_qk_norm_rope_verify_max_abs_diff\":"
+             << mlx_qk_norm_rope_verify_max_abs_diff << ","
              << "\"tensor_group_load_count\":" << tensor_group_load_count << ","
              << "\"resident_total_byte_size\":" << resident.total_byte_size << ","
              << "\"memory_diagnostics\":{"
@@ -12179,7 +12914,13 @@ const char* rusty_mlx_fastsmoke_generation_probe_json(
              << "},"
              << "\"positions_after\":" << kv_cache.positions_stored << ","
              << "\"logits_len\":" << last_logits_len << ","
+             << "\"final_norm_checksum_diagnostics_enabled\":"
+             << (collect_generation_checksums ? "true" : "false") << ","
+             << "\"first_generated_final_norm_checksum_available\":"
+             << (first_generated_final_norm_checksum_available ? "true" : "false") << ","
              << "\"first_generated_final_norm_checksum\":" << first_generated_final_norm_checksum << ","
+             << "\"final_norm_checksum_available\":"
+             << (final_norm_checksum_available ? "true" : "false") << ","
              << "\"final_norm_checksum\":" << last_final_norm_checksum << ","
              << "\"last_token_backend_report\":" << backend_report_json(
                     last_incremental_result,

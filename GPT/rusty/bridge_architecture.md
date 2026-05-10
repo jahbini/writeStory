@@ -138,6 +138,22 @@ Current status:
 - Current chunk-aware compact evidence: same long prompt/settings generated
   `757` tokens to EOS with no fallbacks; timing was `114,492 ms` (`6.61 tok/s`)
   with the same compact K/V reserved bytes `301,989,888`.
+- MLX logits/top-k is now a promoted default. Normal generation does not
+  materialize the full logits vector on CPU. The remaining required readback is
+  selected top-k ids/scores for token selection. Disable only for diagnostics
+  with `RUSTY_DISABLE_MLX_LOGITS_TOPK=1`.
+- Final-norm checksum readback is diagnostic-only behind
+  `RUSTY_DEBUG_CHECKSUMS`, `RUSTY_DEBUG_READBACKS`, or
+  `RUSTY_VERIFY_CHECKSUMS`.
+- q_norm/k_norm and RoPE are now promoted to MLX by default and remain
+  resident through compact K/V append, chunk-aware attention, o_proj/residual,
+  post-attention norm, and the resident MLP chain. Disable only for
+  diagnostics with `RUSTY_DISABLE_MLX_QK_NORM_ROPE=1`.
+- CPU-vs-MLX q_norm/RoPE verification is available with
+  `RUSTY_VERIFY_MLX_QK_NORM_ROPE=1`; recorded max diff was `0.0000457764`.
+- 256-token active validation with prompt `Who are Southwick and Tommy?`,
+  `temp=0.7`, `top_k=40`, `seed=1234`: `30,880.9 ms`, `8.29 tok/s`,
+  readback count `1` (`logits/topk_ids_scores`), no fallbacks, cleanup clean.
 - rotating, quantized, swapped, and recompute modes are future/diagnostic
   concepts only
 - CPU and full-expanded K/V paths remain available only as diagnostics
@@ -146,7 +162,8 @@ Current status:
   - optimized row-block quantized linear
   - cached quantized layout metadata
   - paired MLP gate/up projection
-  - tied-embedding top-1 logits projection
+  - MLX logits/top-k selection
+  - MLX q_norm/k_norm/RoPE with resident qkv-to-attention path
 - scalar quantized linear remains fallback
 - correct but not promoted:
   - `down_full_block_optimized_path`

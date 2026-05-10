@@ -250,6 +250,26 @@ before making new memory/speed decisions.
   - observed max memory: about `4.1 GB`
   - CPU K/V mirror: disabled, fallbacks: none, cleanup: clean
   - status: promoted as default inside `chunked_compact_mlx`
+- MLX logits/top-k and q_norm/RoPE promotion:
+  - logits/top-k selection now runs through the MLX logits array by default;
+    force the old CPU materialized-logits path only for diagnostics with
+    `RUSTY_DISABLE_MLX_LOGITS_TOPK=1`.
+  - final-norm checksum collection is diagnostic-only behind
+    `RUSTY_DEBUG_CHECKSUMS`, `RUSTY_DEBUG_READBACKS`, or
+    `RUSTY_VERIFY_CHECKSUMS`; normal UI generation no longer reads back
+    `final_checksum_and_logits`.
+  - q_norm/k_norm and RoPE now run in MLX by default and remain resident
+    through compact K/V append, chunk-aware attention, o_proj/residual,
+    post-attention norm, and the resident MLP chain.
+  - force the old CPU q_norm/RoPE path only for diagnostics with
+    `RUSTY_DISABLE_MLX_QK_NORM_ROPE=1`.
+  - CPU-vs-MLX q_norm/RoPE verification is available with
+    `RUSTY_VERIFY_MLX_QK_NORM_ROPE=1`; recorded max diff was
+    `0.0000457764`.
+  - 256-token active validation, prompt `Who are Southwick and Tommy?`,
+    `temp=0.7`, `top_k=40`, `seed=1234`: `30,880.9 ms`, `8.29 tok/s`,
+    readback count `1` (`logits/topk_ids_scores`), no fallbacks, cleanup
+    clean.
 - Swapped K/V is still a future backend, not implemented yet.
 - Rotating K/V and quantized K/V are future policies only. The current default
   remains full-context retention, now through the compact MLX chunk cache.

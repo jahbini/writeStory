@@ -248,6 +248,14 @@ resolvePrompt = (L) ->
         chunk_aware_attention_enabled: generation.chunk_aware_attention_enabled
         experimental_mlx_attention_enabled: generation.experimental_mlx_attention_enabled
         experimental_mlx_attention_mode: generation.experimental_mlx_attention_mode
+        experimental_mlx_logits_topk_enabled: generation.experimental_mlx_logits_topk_enabled
+        mlx_logits_topk_applied_to_generation: generation.mlx_logits_topk_applied_to_generation
+        mlx_logits_topk_fallback_used: generation.mlx_logits_topk_fallback_used
+        experimental_mlx_qk_norm_rope_enabled: generation.experimental_mlx_qk_norm_rope_enabled
+        mlx_qk_norm_rope_applied_to_generation: generation.mlx_qk_norm_rope_applied_to_generation
+        mlx_qk_norm_rope_fallback_used: generation.mlx_qk_norm_rope_fallback_used
+        mlx_qk_norm_rope_verify_ran: generation.mlx_qk_norm_rope_verify_ran
+        mlx_qk_norm_rope_verify_max_abs_diff: generation.mlx_qk_norm_rope_verify_max_abs_diff
         mlx_resident_mlp_chain_available: generation.mlx_resident_mlp_chain_available
         mlx_resident_mlp_chain_applied_to_generation: generation.mlx_resident_mlp_chain_applied_to_generation
         mlx_resident_mlp_chain_default_path: generation.mlx_resident_mlp_chain_default_path
@@ -256,6 +264,8 @@ resolvePrompt = (L) ->
         resident_mlp_only_semantics: generation.resident_mlp_only_semantics
         resident_o_residual_enabled: generation.resident_o_residual_enabled
         resident_attention_to_o_enabled: generation.resident_attention_to_o_enabled
+        q_norm_applied: generation.q_norm_applied
+        k_norm_applied: generation.k_norm_applied
         chat: controls.chat
         chat_template_present: formattedInfo?.chat_template_present ? false
         chat_template_applied: formattedInfo?.chat_template_applied ? false
@@ -286,6 +296,11 @@ resolvePrompt = (L) ->
         fallback_steps_per_token: generation.fallback_steps_per_token
         readback_count: generation.readback_count
         readback_reasons: generation.readback_reasons
+        final_norm_checksum_diagnostics_enabled: generation.final_norm_checksum_diagnostics_enabled
+        final_norm_checksum_available: generation.final_norm_checksum_available
+        final_norm_checksum: generation.final_norm_checksum
+        first_generated_final_norm_checksum_available: generation.first_generated_final_norm_checksum_available
+        first_generated_final_norm_checksum: generation.first_generated_final_norm_checksum
         repetition_penalty_supported: generation.repetition_penalty_supported
         repetition_penalty_active: generation.repetition_penalty_active
         repetition_penalty_value: generation.repetition_penalty_value
