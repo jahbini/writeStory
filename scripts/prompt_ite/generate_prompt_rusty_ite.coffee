@@ -244,6 +244,7 @@ resolvePrompt = (L) ->
         attention_backend_active: generation.attention_backend_active
         expanded_kv_cache: generation.expanded_kv_cache
         chunked_expanded_kv_cache: generation.chunked_expanded_kv_cache
+        chunked_compact_mlx_cache: generation.chunked_compact_mlx_cache
         experimental_mlx_attention_enabled: generation.experimental_mlx_attention_enabled
         experimental_mlx_attention_mode: generation.experimental_mlx_attention_mode
         mlx_resident_mlp_chain_available: generation.mlx_resident_mlp_chain_available

@@ -22,13 +22,16 @@ Branch: `main`
 - Normal Rusty generation uses the native session API with resident model
   groups, resident projection arrays, corrected Qwen q_norm/k_norm before
   RoPE, and MLX/Metal projection execution.
-- The default attention backend is `chunked_expanded_kv`.
-- `chunked_expanded_kv` allocates expanded q-head K/V in on-demand chunks
-  instead of preallocating for the full requested `max_tokens` budget.
+- The default attention backend is `chunked_compact_mlx`.
+- `chunked_compact_mlx` stores K/V in compact kv-head chunks and expands to
+  q-head layout at attention time. For this Qwen GQA model, that reduces K/V
+  chunk memory by `4x` versus expanded q-head chunk storage.
+- `chunked_expanded_kv` remains available explicitly with
+  `RUSTY_ATTENTION_BACKEND=chunked_expanded_kv` for diagnostics/benchmarking.
 - The active cache is now named behind a cache abstraction:
   - `CachePolicy::Full { step }` is the implemented policy used by the
-    current `chunked_expanded_kv` full-context cache; `step` is the chunk
-    growth size, currently `256` by default.
+    current full-context chunked cache; `step` is the chunk growth size,
+    currently `256` by default.
   - `Rotating { max_size, keep, step }`, `Quantized { bits, group_size,
     start_at, base }`, and `Recompute { window }` are defined for future work
     only.
@@ -37,9 +40,9 @@ Branch: `main`
 - Generation metadata includes `cache_stats` with active backend, KV length,
   capacity, active/reserved bytes, chunk count/size, model geometry, and
   placeholder transient scratch arena accounting.
-- `cache_stats` also separates MLX expanded K/V bytes from the optional CPU
-  compact K/V mirror. The CPU mirror is disabled by default for MLX expanded
-  K/V backends and can be restored for diagnostics/fallback with
+- `cache_stats` separates compact MLX K/V bytes, expanded MLX K/V bytes, and
+  the optional CPU compact K/V mirror. The CPU mirror is disabled by default
+  for MLX K/V backends and can be restored for diagnostics/fallback with
   `RUSTY_KEEP_CPU_KV_MIRROR=1`.
 - Default chunk size is `256`; override with `RUSTY_KV_CHUNK_SIZE`.
 - `RUSTY_ATTENTION_BACKEND=expanded_kv` is retained for explicit diagnostics
@@ -71,7 +74,7 @@ Branch: `main`
   attention timing should not be used as final conclusions unless rerun after
   the fix.
 - Do revalidate:
-  - the corrected current default `chunked_expanded_kv` memory/speed/quality
+  - the corrected current default `chunked_compact_mlx` memory/speed/quality
     baseline,
   - any future KV strategy that changes cache length accounting,
   - any test that disables the CPU K/V mirror or changes cache append/fetch
@@ -117,7 +120,7 @@ before making new memory/speed decisions.
   - generation timing: `614,180 ms`
   - throughput: `1.11 tok/s`
   - status: too slow; correctness/fallback microscope only
-- Current `chunked_expanded_kv` default:
+- Former `chunked_expanded_kv` default:
   - active K/V bytes for 683-token run: `905,969,664`
   - chunks: `108` total, max `3` per layer, `256` tokens per chunk
   - total estimated runtime memory: `5,213,017,088` bytes
@@ -209,11 +212,25 @@ before making new memory/speed decisions.
 
 ## Current Limitations
 
-- Chunked expanded K/V still uses concat of active chunks during attention;
-  future work can add chunk-aware attention or spill/swap old chunks.
-- `compact_mlx` / swapped K/V is a future backend, not implemented yet.
+- Chunked compact K/V still uses concat of active compact chunks during
+  attention and expands to q-head layout at attention time; future work can add
+  chunk-aware attention or spill/swap old chunks.
+- `chunked_compact_mlx` is the promoted default backend. It stores K/V chunks
+  as `[kv_heads, chunk_size, head_dim]`. `chunked_expanded_kv` remains
+  available only as an explicit diagnostic/benchmark backend.
+- Compact K/V long validation on the corrected active path passed:
+  - prompt/settings: `what are the important emotions?`, `max_tokens=2000`,
+    `temp=0.7`, `top_k=40`, `seed=1234`
+  - generated tokens: `757`, stop reason: `eos`
+  - timing: `138,771 ms`, `5.46 tok/s`
+  - recorded expanded baseline: `142,435 ms`, `5.31 tok/s`
+  - compact reserved K/V bytes: `301,989,888`
+  - recorded expanded reserved K/V bytes: `1,207,959,552`
+  - byte ratio: `0.25` (expected 4x GQA reduction)
+  - CPU K/V mirror: disabled, fallbacks: none, cleanup: clean
+- Swapped K/V is still a future backend, not implemented yet.
 - Rotating K/V and quantized K/V are future policies only. The current default
-  remains the full-context chunked expanded K/V cache.
+  remains full-context retention, now through the compact MLX chunk cache.
 - Transient layer/token scratch accounting is exposed as placeholder fields
   (`arena_active_bytes`, `arena_cached_bytes`, `arena_peak_bytes`) but is not
   implemented yet.
@@ -226,8 +243,8 @@ before making new memory/speed decisions.
 
 ## Recommended Next Step
 
-- Keep normal tests on the active `chunked_expanded_kv` path only.
-- If memory remains too high, improve chunk policy or add compact/swapped MLX
-  K/V; do not fall back to full preallocated expanded K/V.
+- Keep normal tests on the active `chunked_compact_mlx` path only.
+- If memory remains too high, improve chunk policy or add swapped MLX K/V; do
+  not fall back to full preallocated or expanded q-head K/V.
 - If speed is the next target, compare against Python MLX behavior using one
   focused current-path test, not old CPU or full-expanded baselines.

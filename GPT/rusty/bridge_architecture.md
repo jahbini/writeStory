@@ -70,20 +70,21 @@ Current probe and test shape:
   execution for explicit full/comparison profiles or math-contract changes.
 - runtime tests follow the same rule: once a path is disproved, record it and
   stop running it in normal development. For current Rusty generation:
-  - `chunked_expanded_kv` is the active default attention backend
+  - `chunked_compact_mlx` is the active default attention backend
   - the active K/V implementation is now named through a cache abstraction:
-    `CachePolicy::Full { step }` backed by the current chunked expanded
-    q-head K/V cache; `step` is the chunk growth size, currently `256` by
-    default
+    `CachePolicy::Full { step }` backed by the current chunked compact
+    kv-head K/V cache; `step` is the chunk growth size, currently `256` by
+    default. It expands kv-head chunks to q-head layout at attention time.
   - planned but not implemented policies are `Rotating`, `Quantized`, and
     diagnostic-only `Recompute`; do not replace the default cache with
     recompute
   - generation metadata should include `cache_stats` with policy, backend,
     K/V length/capacity, active/reserved bytes, chunks, model geometry, and
     placeholder scratch arena fields
-  - `cache_stats` separates MLX expanded K/V bytes from the optional CPU
-    compact K/V mirror. The CPU mirror is off by default for MLX expanded K/V
-    backends; use `RUSTY_KEEP_CPU_KV_MIRROR=1` only for diagnostics/fallback.
+  - `cache_stats` separates compact MLX K/V bytes, MLX expanded K/V bytes, and
+    the optional CPU compact K/V mirror. The CPU mirror is off by default for
+    MLX K/V backends; use `RUSTY_KEEP_CPU_KV_MIRROR=1` only for
+    diagnostics/fallback.
   - full preallocated `expanded_kv` is diagnostic/benchmark-only
   - `compact_cpu` attention is fallback/diagnostic-only
   - `RUSTY_EXPERIMENTAL_MLX_RESIDENT_BLOCK=1` is diagnostic-only: it is
@@ -119,10 +120,19 @@ Current status:
   wrappers via opaque handles
 - Qwen math parity is corrected with q_norm/k_norm before RoPE
 - tokenizer/chat formatting handles Qwen special tokens and newlines
-- default attention backend is chunked expanded K/V on MLX/Metal
-- current K/V cache behavior is full-context retention implemented by
-  `chunked_expanded_kv`; rotating, quantized, compact MLX, swapped, and
-  recompute modes are future/diagnostic concepts only
+- default attention backend is chunked compact K/V on MLX/Metal
+- current default K/V cache behavior is full-context retention implemented by
+  `chunked_compact_mlx`
+- `chunked_compact_mlx` stores K/V chunks at `kv_heads` and expands to q-head
+  layout at attention time. `chunked_expanded_kv` remains available by explicit
+  env override for diagnostics/benchmarking.
+- Current compact validation evidence: same long prompt/settings as the
+  corrected active baseline generated `757` tokens to EOS with no fallbacks;
+  compact K/V reserved bytes were `301,989,888` versus recorded expanded
+  reserved bytes `1,207,959,552`, with timing `138,771 ms` (`5.46 tok/s`)
+  versus recorded expanded timing `142,435 ms` (`5.31 tok/s`).
+- rotating, quantized, swapped, and recompute modes are future/diagnostic
+  concepts only
 - CPU and full-expanded K/V paths remain available only as diagnostics
 - the CLI probe style should be explicit Q/A, not silent answers-only output
 - active promoted smoke decode flags:
