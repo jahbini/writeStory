@@ -271,6 +271,7 @@ resolvePrompt = (L) ->
         active_native_models: generation.active_native_models
         active_native_tokenizers: generation.active_native_tokenizers
         memory_diagnostics: generation.memory_diagnostics
+        cache_stats: generation.cache_stats
         warmup_ms: warm.warmup_ms
         warmup_reused: warm.reused
         generation_timing_ms: generation.generation_1_total_ms ? generation.total_generation_ms
@@ -283,6 +284,15 @@ resolvePrompt = (L) ->
         fallback_steps_per_token: generation.fallback_steps_per_token
         readback_count: generation.readback_count
         readback_reasons: generation.readback_reasons
+        repetition_penalty_supported: generation.repetition_penalty_supported
+        repetition_penalty_active: generation.repetition_penalty_active
+        repetition_penalty_value: generation.repetition_penalty_value
+        repetition_penalty_applied_with_adapter: generation.repetition_penalty_applied_with_adapter
+        repetition_penalty_generated_token_history_considered: generation.repetition_penalty_generated_token_history_considered
+        repetition_penalty_prompt_tokens_considered: generation.repetition_penalty_prompt_tokens_considered
+        repetition_diagnostic_enabled: generation.repetition_diagnostic_enabled
+        repetition_diagnostics: generation.repetition_diagnostics
+        repetition_collapse_summary: generation.repetition_collapse_summary
         last_token_backend_report: generation.last_token_backend_report
         cleanup: cleanup
       rawRecord =

@@ -71,6 +71,19 @@ Current probe and test shape:
 - runtime tests follow the same rule: once a path is disproved, record it and
   stop running it in normal development. For current Rusty generation:
   - `chunked_expanded_kv` is the active default attention backend
+  - the active K/V implementation is now named through a cache abstraction:
+    `CachePolicy::Full { step }` backed by the current chunked expanded
+    q-head K/V cache; `step` is the chunk growth size, currently `256` by
+    default
+  - planned but not implemented policies are `Rotating`, `Quantized`, and
+    diagnostic-only `Recompute`; do not replace the default cache with
+    recompute
+  - generation metadata should include `cache_stats` with policy, backend,
+    K/V length/capacity, active/reserved bytes, chunks, model geometry, and
+    placeholder scratch arena fields
+  - `cache_stats` separates MLX expanded K/V bytes from the optional CPU
+    compact K/V mirror. The CPU mirror is off by default for MLX expanded K/V
+    backends; use `RUSTY_KEEP_CPU_KV_MIRROR=1` only for diagnostics/fallback.
   - full preallocated `expanded_kv` is diagnostic/benchmark-only
   - `compact_cpu` attention is fallback/diagnostic-only
   - `RUSTY_EXPERIMENTAL_MLX_RESIDENT_BLOCK=1` is diagnostic-only: it is
@@ -107,6 +120,9 @@ Current status:
 - Qwen math parity is corrected with q_norm/k_norm before RoPE
 - tokenizer/chat formatting handles Qwen special tokens and newlines
 - default attention backend is chunked expanded K/V on MLX/Metal
+- current K/V cache behavior is full-context retention implemented by
+  `chunked_expanded_kv`; rotating, quantized, compact MLX, swapped, and
+  recompute modes are future/diagnostic concepts only
 - CPU and full-expanded K/V paths remain available only as diagnostics
 - the CLI probe style should be explicit Q/A, not silent answers-only output
 - active promoted smoke decode flags:

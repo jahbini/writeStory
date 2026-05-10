@@ -345,6 +345,16 @@ fn tokenizer_encode_qwen_like(record: &TokenizerRecord, text: &str) -> Result<Ve
             }
         }
 
+        let next_special_char_offset = special_tokens
+            .iter()
+            .filter_map(|special| rest.find(special.as_str()))
+            .filter(|offset| *offset > 0)
+            .map(|byte_offset| rest[..byte_offset].chars().count())
+            .min();
+        let normal_end = next_special_char_offset
+            .map(|offset| index + offset)
+            .unwrap_or(chars.len());
+
         let marker = match chars[index] {
             '\n' => Some("Ċ".to_string()),
             ' ' => Some("Ġ".to_string()),
@@ -359,7 +369,7 @@ fn tokenizer_encode_qwen_like(record: &TokenizerRecord, text: &str) -> Result<Ve
             }
         }
 
-        let transformed_rest = chars[index..]
+        let transformed_rest = chars[index..normal_end]
             .iter()
             .map(|ch| match ch {
                 '\n' => 'Ċ',

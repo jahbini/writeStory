@@ -20,6 +20,7 @@
 #include <string>
 #include <thread>
 #include <tuple>
+#include <unordered_set>
 #include <vector>
 #include <unordered_map>
 #include <utility>
@@ -181,6 +182,99 @@ struct NativeLayerKvCache {
   std::size_t expanded_chunk_size = 0;
 #endif
 };
+
+enum class CachePolicyKind {
+  Full,
+  Rotating,
+  Quantized,
+  Recompute,
+};
+
+struct CachePolicy {
+  CachePolicyKind kind = CachePolicyKind::Full;
+  std::uint64_t step = 1;
+  std::uint64_t max_size = 0;
+  std::uint64_t keep = 0;
+  std::uint64_t bits = 0;
+  std::uint64_t group_size = 0;
+  std::uint64_t start_at = 0;
+  std::uint64_t window = 0;
+  std::string base;
+};
+
+class LayerKvCache {
+ public:
+  virtual ~LayerKvCache() = default;
+  virtual void update_and_fetch() = 0;
+  virtual void trim(std::uint64_t max_len) = 0;
+  virtual std::uint64_t len() const = 0;
+  virtual std::uint64_t nbytes() const = 0;
+  virtual bool is_empty() const = 0;
+};
+
+class ChunkedExpandedKvCache final : public LayerKvCache {
+ public:
+  explicit ChunkedExpandedKvCache(const NativeLayerKvCache& layer)
+      : layer_(layer) {}
+
+  void update_and_fetch() override {
+    // The current implementation updates/fetches through the existing
+    // mlx_expanded_kv_cache_* helpers. This concrete cache object names the
+    // active policy without changing execution behavior yet.
+  }
+
+  void trim(std::uint64_t /*max_len*/) override {
+    // Full-style cache keeps all positions currently in scope.
+  }
+
+  std::uint64_t len() const override {
+#if defined(RUSTY_MLX_HAVE_NATIVE_LINK)
+    if (layer_.expanded_chunk_size > 0) {
+      return static_cast<std::uint64_t>(layer_.expanded_chunk_current_len);
+    }
+    if (layer_.expanded_current_len > 0) {
+      return static_cast<std::uint64_t>(layer_.expanded_current_len);
+    }
+#endif
+    return static_cast<std::uint64_t>(layer_.keys.size());
+  }
+
+  std::uint64_t nbytes() const override {
+    std::uint64_t bytes = 0;
+    for (const auto& key : layer_.keys) {
+      bytes += static_cast<std::uint64_t>(key.size() * sizeof(float));
+    }
+    for (const auto& value : layer_.values) {
+      bytes += static_cast<std::uint64_t>(value.size() * sizeof(float));
+    }
+#if defined(RUSTY_MLX_HAVE_NATIVE_LINK)
+    for (const auto& chunk : layer_.expanded_key_chunks) {
+      bytes += static_cast<std::uint64_t>(chunk.nbytes());
+    }
+    for (const auto& chunk : layer_.expanded_value_chunks) {
+      bytes += static_cast<std::uint64_t>(chunk.nbytes());
+    }
+    if (layer_.expanded_keys.has_value()) {
+      bytes += static_cast<std::uint64_t>(layer_.expanded_keys->nbytes());
+    }
+    if (layer_.expanded_values.has_value()) {
+      bytes += static_cast<std::uint64_t>(layer_.expanded_values->nbytes());
+    }
+#endif
+    return bytes;
+  }
+
+  bool is_empty() const override {
+    return len() == 0;
+  }
+
+ private:
+  const NativeLayerKvCache& layer_;
+};
+
+std::uint64_t layer_kv_cache_len(const NativeLayerKvCache& layer) {
+  return ChunkedExpandedKvCache(layer).len();
+}
 
 struct NativeSessionKvCache {
   std::string owner_session;
@@ -1112,6 +1206,40 @@ std::string json_array_string_to_string(const std::vector<std::string>& values) 
     out << "\"" << json_escape(values[i]) << "\"";
   }
   out << "]";
+  return out.str();
+}
+
+std::string cache_policy_to_json(const CachePolicy& policy) {
+  std::ostringstream out;
+  out << "{";
+  switch (policy.kind) {
+    case CachePolicyKind::Full:
+      out << "\"kind\":\"Full\","
+          << "\"step\":" << policy.step;
+      break;
+    case CachePolicyKind::Rotating:
+      out << "\"kind\":\"Rotating\","
+          << "\"max_size\":" << policy.max_size << ","
+          << "\"keep\":" << policy.keep << ","
+          << "\"step\":" << policy.step << ","
+          << "\"implemented\":false";
+      break;
+    case CachePolicyKind::Quantized:
+      out << "\"kind\":\"Quantized\","
+          << "\"bits\":" << policy.bits << ","
+          << "\"group_size\":" << policy.group_size << ","
+          << "\"start_at\":" << policy.start_at << ","
+          << "\"base\":\"" << json_escape(policy.base) << "\","
+          << "\"implemented\":false";
+      break;
+    case CachePolicyKind::Recompute:
+      out << "\"kind\":\"Recompute\","
+          << "\"window\":" << policy.window << ","
+          << "\"diagnostic_only\":true,"
+          << "\"implemented\":false";
+      break;
+  }
+  out << "}";
   return out.str();
 }
 
@@ -2699,6 +2827,14 @@ bool defer_chunked_kv_append_sync() {
   return env_truthy("RUSTY_DEFER_CHUNKED_KV_APPEND_SYNC");
 }
 
+bool keep_cpu_kv_mirror() {
+  if (env_truthy("RUSTY_KEEP_CPU_KV_MIRROR")) {
+    return true;
+  }
+  const std::string mode = experimental_mlx_attention_mode();
+  return mode != "chunked_expanded_kv" && mode != "expanded_kv";
+}
+
 std::uint64_t current_process_thread_count() {
 #if defined(__APPLE__)
   thread_act_array_t threads = nullptr;
@@ -3650,6 +3786,217 @@ struct GenerationStopConfig {
 
 thread_local GenerationStopConfig generation_stop_config;
 
+struct RepetitionDiagnosticEntry {
+  std::uint64_t token_position = 0;
+  std::uint64_t generated_token_id = 0;
+  std::string generated_token_text;
+  std::uint64_t eos_token_id = 0;
+  float eos_raw_logit = 0.0f;
+  std::uint64_t eos_rank = 0;
+  double eos_probability = 0.0;
+  float selected_token_raw_logit = 0.0f;
+  std::uint64_t selected_token_rank = 0;
+  double selected_token_probability = 0.0;
+  std::vector<std::pair<std::uint64_t, float>> top10;
+  std::vector<double> top10_probabilities;
+  double entropy = 0.0;
+  double top1_minus_top2_logit_gap = 0.0;
+  std::uint64_t repeated_token_streak_current = 0;
+  std::uint64_t repeated_token_streak_max = 0;
+  std::uint64_t low_id_token_count_so_far = 0;
+  std::uint64_t numeric_token_count_so_far = 0;
+  bool adapter_zeroed_comparison_available = false;
+  std::string adapter_zeroed_comparison_reason =
+      "not_available_without_parallel_no_adapter_decode_state";
+};
+
+bool repetition_diagnostic_enabled() {
+  return env_truthy("RUSTY_REPETITION_DIAGNOSTIC");
+}
+
+bool token_is_numeric_or_low_id(std::uint64_t token_id) {
+  return token_id <= 1000;
+}
+
+bool should_capture_repetition_diagnostic(
+    std::uint64_t token_position,
+    std::uint64_t requested_tokens) {
+  if (!repetition_diagnostic_enabled()) {
+    return false;
+  }
+  if (token_position == 128 || token_position == 256 || token_position == 512) {
+    return true;
+  }
+  if (token_position > 500 && token_position % 100 == 0) {
+    return true;
+  }
+  return requested_tokens >= 32 && token_position > requested_tokens - 32;
+}
+
+std::uint64_t logit_rank_desc(const std::vector<float>& logits, std::uint64_t token_id) {
+  if (token_id >= logits.size()) {
+    return 0;
+  }
+  const float target = logits[static_cast<std::size_t>(token_id)];
+  std::uint64_t rank = 1;
+  for (float value : logits) {
+    if (value > target) {
+      rank += 1;
+    }
+  }
+  return rank;
+}
+
+std::vector<double> sampling_distribution_probabilities(
+    const std::vector<float>& logits,
+    const std::vector<std::pair<std::uint64_t, float>>& top) {
+  std::vector<double> probabilities(top.size(), 0.0);
+  if (top.empty()) {
+    return probabilities;
+  }
+  const double temperature = generation_sampling_config.enabled
+      ? std::max(generation_sampling_config.temperature, 1.0e-6)
+      : 1.0;
+  double max_scaled = -std::numeric_limits<double>::infinity();
+  for (const auto& item : top) {
+    max_scaled = std::max(max_scaled, static_cast<double>(item.second) / temperature);
+  }
+  double total = 0.0;
+  for (std::size_t i = 0; i < top.size(); ++i) {
+    probabilities[i] = std::exp((static_cast<double>(top[i].second) / temperature) - max_scaled);
+    total += probabilities[i];
+  }
+  if (total > 0.0 && std::isfinite(total)) {
+    for (double& value : probabilities) {
+      value /= total;
+    }
+  }
+  return probabilities;
+}
+
+double distribution_entropy(const std::vector<double>& probabilities) {
+  double entropy = 0.0;
+  for (double probability : probabilities) {
+    if (probability > 0.0) {
+      entropy -= probability * std::log(probability);
+    }
+  }
+  return entropy;
+}
+
+RepetitionDiagnosticEntry make_repetition_diagnostic_entry(
+    const std::vector<float>& logits,
+    std::uint64_t selected_token_id,
+    std::uint64_t token_position,
+    std::uint64_t repeated_token_streak_current,
+    std::uint64_t repeated_token_streak_max,
+    std::uint64_t low_id_token_count_so_far,
+    std::uint64_t numeric_token_count_so_far) {
+  RepetitionDiagnosticEntry entry;
+  entry.token_position = token_position;
+  entry.generated_token_id = selected_token_id;
+  entry.generated_token_text = std::to_string(selected_token_id);
+  entry.eos_token_id = generation_stop_config.eos_token_id;
+  if (generation_stop_config.eos_token_id < logits.size()) {
+    entry.eos_raw_logit = logits[static_cast<std::size_t>(generation_stop_config.eos_token_id)];
+    entry.eos_rank = logit_rank_desc(logits, generation_stop_config.eos_token_id);
+  }
+  if (selected_token_id < logits.size()) {
+    entry.selected_token_raw_logit = logits[static_cast<std::size_t>(selected_token_id)];
+    entry.selected_token_rank = logit_rank_desc(logits, selected_token_id);
+  }
+  const std::size_t top_count = std::min<std::size_t>(
+      std::max<std::size_t>(10, static_cast<std::size_t>(generation_sampling_config.top_k)),
+      logits.size());
+  std::vector<std::pair<std::uint64_t, float>> distribution_top = top_logits(logits, top_count);
+  std::vector<double> distribution_probabilities =
+      sampling_distribution_probabilities(logits, distribution_top);
+  entry.entropy = distribution_entropy(distribution_probabilities);
+  entry.top10 = top_logits(logits, 10);
+  entry.top10_probabilities.assign(entry.top10.size(), 0.0);
+  for (std::size_t i = 0; i < entry.top10.size(); ++i) {
+    const std::uint64_t token_id = entry.top10[i].first;
+    for (std::size_t j = 0; j < distribution_top.size(); ++j) {
+      if (distribution_top[j].first == token_id) {
+        entry.top10_probabilities[i] = distribution_probabilities[j];
+        break;
+      }
+    }
+  }
+  for (std::size_t i = 0; i < distribution_top.size(); ++i) {
+    if (distribution_top[i].first == selected_token_id) {
+      entry.selected_token_probability = distribution_probabilities[i];
+    }
+    if (distribution_top[i].first == generation_stop_config.eos_token_id) {
+      entry.eos_probability = distribution_probabilities[i];
+    }
+  }
+  if (entry.top10.size() >= 2) {
+    entry.top1_minus_top2_logit_gap =
+        static_cast<double>(entry.top10[0].second) -
+        static_cast<double>(entry.top10[1].second);
+  }
+  entry.repeated_token_streak_current = repeated_token_streak_current;
+  entry.repeated_token_streak_max = repeated_token_streak_max;
+  entry.low_id_token_count_so_far = low_id_token_count_so_far;
+  entry.numeric_token_count_so_far = numeric_token_count_so_far;
+  return entry;
+}
+
+std::string repetition_diagnostics_json(const std::vector<RepetitionDiagnosticEntry>& entries) {
+  std::ostringstream out;
+  out << "[";
+  for (std::size_t i = 0; i < entries.size(); ++i) {
+    if (i > 0) {
+      out << ",";
+    }
+    const auto& entry = entries[i];
+    out << "{"
+        << "\"token_position\":" << entry.token_position << ","
+        << "\"generated_token_id\":" << entry.generated_token_id << ","
+        << "\"decoded_token_text\":\"" << json_escape(entry.generated_token_text) << "\","
+        << "\"eos_token_id\":" << entry.eos_token_id << ","
+        << "\"eos_raw_logit\":" << entry.eos_raw_logit << ","
+        << "\"eos_rank\":" << entry.eos_rank << ","
+        << "\"eos_softmax_probability\":" << entry.eos_probability << ","
+        << "\"selected_token_raw_logit\":" << entry.selected_token_raw_logit << ","
+        << "\"selected_token_rank\":" << entry.selected_token_rank << ","
+        << "\"selected_token_probability\":" << entry.selected_token_probability << ","
+        << "\"top10\":[";
+    for (std::size_t j = 0; j < entry.top10.size(); ++j) {
+      if (j > 0) {
+        out << ",";
+      }
+      out << "{"
+          << "\"token_id\":" << entry.top10[j].first << ","
+          << "\"decoded_text\":\"" << entry.top10[j].first << "\","
+          << "\"logit\":" << entry.top10[j].second << ","
+          << "\"probability\":" << (j < entry.top10_probabilities.size() ? entry.top10_probabilities[j] : 0.0)
+          << "}";
+    }
+    out << "],"
+        << "\"entropy\":" << entry.entropy << ","
+        << "\"top1_minus_top2_logit_gap\":" << entry.top1_minus_top2_logit_gap << ","
+        << "\"repeated_token_streak_current\":" << entry.repeated_token_streak_current << ","
+        << "\"repeated_token_streak_max\":" << entry.repeated_token_streak_max << ","
+        << "\"low_id_token_count_so_far\":" << entry.low_id_token_count_so_far << ","
+        << "\"numeric_token_count_so_far\":" << entry.numeric_token_count_so_far << ","
+        << "\"base_no_adapter_comparison_available\":false,"
+        << "\"base_no_adapter_comparison_reason\":\""
+        << json_escape(entry.adapter_zeroed_comparison_reason) << "\","
+        << "\"base_no_adapter_eos_rank\":null,"
+        << "\"base_no_adapter_eos_logit\":null,"
+        << "\"base_no_adapter_eos_probability\":null,"
+        << "\"base_no_adapter_top10\":[],"
+        << "\"adapter_delta_for_selected_token\":null,"
+        << "\"adapter_delta_for_eos_token\":null,"
+        << "\"eos_rank_improves_when_adapter_zeroed\":null"
+        << "}";
+  }
+  out << "]";
+  return out.str();
+}
+
 std::vector<std::uint64_t> parse_u64_csv(const char* raw) {
   std::vector<std::uint64_t> values;
   if (raw == nullptr) {
@@ -3994,14 +4341,19 @@ void append_native_kv(
   if (layer >= cache->layers.size()) {
     cache->layers.resize(layer + 1);
   }
-  cache->layers[layer].keys.push_back(k_values);
-  cache->layers[layer].values.push_back(v_values);
+  if (keep_cpu_kv_mirror()) {
+    cache->layers[layer].keys.push_back(k_values);
+    cache->layers[layer].values.push_back(v_values);
+  }
   cache->layers_allocated = std::max<std::uint64_t>(
       cache->layers_allocated,
       static_cast<std::uint64_t>(cache->layers.size()));
-  cache->positions_stored = std::max<std::uint64_t>(
-      cache->positions_stored,
-      static_cast<std::uint64_t>(cache->layers[layer].keys.size()));
+  ChunkedExpandedKvCache layer_cache(cache->layers[layer]);
+  const std::uint64_t layer_len =
+      keep_cpu_kv_mirror()
+          ? static_cast<std::uint64_t>(cache->layers[layer].keys.size())
+          : layer_cache.len();
+  cache->positions_stored = std::max<std::uint64_t>(cache->positions_stored, layer_len);
 }
 
 std::vector<float> cached_single_token_attention_values(
@@ -5967,8 +6319,7 @@ ResidentDecodeValue layer_decode_value_resident_incremental_from_input(
   }
   auto qk_norm_rope_start = std::chrono::steady_clock::now();
   apply_qk_norm_in_place(groups.q_norm, groups.k_norm, q_values, k_values, eps);
-  const std::uint64_t rope_position =
-      static_cast<std::uint64_t>(kv_cache.layers[layer].keys.size());
+  const std::uint64_t rope_position = layer_kv_cache_len(kv_cache.layers[layer]);
   apply_active_rope_to_qk(q_values, k_values, rope_position);
   if (timing != nullptr) {
     add_elapsed_ms(timing->qk_norm_rope_ms, qk_norm_rope_start);
@@ -6274,6 +6625,12 @@ ResidentDecodeValue layer_decode_value_resident_incremental_from_input(
     }
   }
   if (attention_values.empty()) {
+    if (!keep_cpu_kv_mirror() &&
+        (experimental_mlx_attention_mode() == "chunked_expanded_kv" ||
+         experimental_mlx_attention_mode() == "expanded_kv")) {
+      throw std::runtime_error(
+          "CPU attention fallback requires RUSTY_KEEP_CPU_KV_MIRROR=1");
+    }
     attention_values = cached_single_token_attention_values(
         q_values,
         kv_cache.layers[layer],
@@ -9699,6 +10056,12 @@ const char* rusty_mlx_fastsmoke_generation_probe_json(
     ResidentDecodeResult last_incremental_result;
     GenerationTimingBuckets generation_timing_buckets;
     std::vector<DecodeTimingSnapshot> diagnostic_snapshots;
+    std::vector<RepetitionDiagnosticEntry> repetition_diagnostics;
+    std::uint64_t repeated_token_streak_current = 0;
+    std::uint64_t repeated_token_streak_max = 0;
+    std::uint64_t low_id_token_count_so_far = 0;
+    std::uint64_t numeric_token_count_so_far = 0;
+    std::uint64_t previous_generated_token = std::numeric_limits<std::uint64_t>::max();
     auto should_capture_decode_snapshot = [](std::uint64_t token_position) {
       return token_position == 1 ||
              token_position == 8 ||
@@ -9777,18 +10140,71 @@ const char* rusty_mlx_fastsmoke_generation_probe_json(
           top_token_id = selected.first;
           top_token_score = selected.second;
           logits_len = logits.size();
+          if (top_token_id == previous_generated_token) {
+            repeated_token_streak_current += 1;
+          } else {
+            repeated_token_streak_current = 1;
+          }
+          repeated_token_streak_max =
+              std::max(repeated_token_streak_max, repeated_token_streak_current);
+          previous_generated_token = top_token_id;
+          if (top_token_id < 100) {
+            low_id_token_count_so_far += 1;
+          }
+          if (token_is_numeric_or_low_id(top_token_id)) {
+            numeric_token_count_so_far += 1;
+          }
+          const std::uint64_t token_position_for_diag = step + 1;
+          if (should_capture_repetition_diagnostic(token_position_for_diag, generated_tokens)) {
+            repetition_diagnostics.push_back(make_repetition_diagnostic_entry(
+                logits,
+                top_token_id,
+                token_position_for_diag,
+                repeated_token_streak_current,
+                repeated_token_streak_max,
+                low_id_token_count_so_far,
+                numeric_token_count_so_far));
+          }
         } catch (...) {
           record_mlx_quantized_linear_fallback_step();
           auto top = quantized_linear_top1_layout_cached(embedding, final_norm_values);
           top_token_id = top.first;
           top_token_score = top.second;
           logits_len = embedding.quantized_output_len;
+          if (top_token_id == previous_generated_token) {
+            repeated_token_streak_current += 1;
+          } else {
+            repeated_token_streak_current = 1;
+          }
+          repeated_token_streak_max =
+              std::max(repeated_token_streak_max, repeated_token_streak_current);
+          previous_generated_token = top_token_id;
+          if (top_token_id < 100) {
+            low_id_token_count_so_far += 1;
+          }
+          if (token_is_numeric_or_low_id(top_token_id)) {
+            numeric_token_count_so_far += 1;
+          }
         }
       } else {
         auto top = quantized_linear_top1_layout_cached(embedding, final_norm_values);
         top_token_id = top.first;
         top_token_score = top.second;
         logits_len = embedding.quantized_output_len;
+        if (top_token_id == previous_generated_token) {
+          repeated_token_streak_current += 1;
+        } else {
+          repeated_token_streak_current = 1;
+        }
+        repeated_token_streak_max =
+            std::max(repeated_token_streak_max, repeated_token_streak_current);
+        previous_generated_token = top_token_id;
+        if (top_token_id < 100) {
+          low_id_token_count_so_far += 1;
+        }
+        if (token_is_numeric_or_low_id(top_token_id)) {
+          numeric_token_count_so_far += 1;
+        }
       }
       add_elapsed_ms(incremental_result.logits_projection_ms, logits_start);
       const auto incremental_end = std::chrono::steady_clock::now();
@@ -10002,7 +10418,21 @@ const char* rusty_mlx_fastsmoke_generation_probe_json(
     std::uint64_t chunked_allocated_chunks_total = 0;
     std::uint64_t chunked_layers_with_chunks = 0;
     std::uint64_t chunked_max_chunks_per_layer = 0;
+    std::uint64_t cache_object_len_max = 0;
+    std::uint64_t cache_object_nbytes_total = 0;
+    std::uint64_t cpu_compact_kv_mirror_bytes = 0;
     for (const auto& layer_cache : kv_cache.layers) {
+      ChunkedExpandedKvCache cache_object(layer_cache);
+      cache_object_len_max = std::max(cache_object_len_max, cache_object.len());
+      cache_object_nbytes_total += cache_object.nbytes();
+      for (const auto& key : layer_cache.keys) {
+        cpu_compact_kv_mirror_bytes +=
+            static_cast<std::uint64_t>(key.size() * sizeof(float));
+      }
+      for (const auto& value : layer_cache.values) {
+        cpu_compact_kv_mirror_bytes +=
+            static_cast<std::uint64_t>(value.size() * sizeof(float));
+      }
       const std::uint64_t chunks =
           static_cast<std::uint64_t>(layer_cache.expanded_key_chunks.size());
       chunked_allocated_chunks_total += chunks;
@@ -10026,6 +10456,38 @@ const char* rusty_mlx_fastsmoke_generation_probe_json(
             : (active_attention_mode == "chunked_expanded_kv"
                 ? chunked_expanded_kv_active_bytes
                 : compact_kv_bytes_estimate);
+    const CachePolicy active_cache_policy{
+        CachePolicyKind::Full,
+        static_cast<std::uint64_t>(chunk_size),
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        ""};
+    const std::uint64_t logical_expanded_kv_bytes_active =
+        layers *
+        active_rope_config().num_attention_heads *
+        kv_cache.positions_stored *
+        active_rope_config().head_dim * 2ULL * sizeof(float);
+    const std::uint64_t kv_capacity_tokens =
+        active_attention_mode == "chunked_expanded_kv"
+            ? chunked_max_chunks_per_layer * static_cast<std::uint64_t>(chunk_size)
+            : kv_cache.max_seq;
+    const std::uint64_t kv_bytes_active =
+        active_attention_mode == "chunked_expanded_kv"
+            ? logical_expanded_kv_bytes_active
+            : active_kv_bytes_estimate;
+    const std::uint64_t kv_bytes_reserved =
+        active_attention_mode == "chunked_expanded_kv"
+            ? chunked_expanded_kv_active_bytes
+            : active_kv_bytes_estimate;
+    const bool cpu_compact_kv_mirror_enabled = cpu_compact_kv_mirror_bytes > 0;
+    const std::uint64_t cache_total_bytes =
+        active_attention_mode == "chunked_expanded_kv"
+            ? chunked_expanded_kv_active_bytes + cpu_compact_kv_mirror_bytes
+            : cache_object_nbytes_total;
     const std::uint64_t total_estimated_model_runtime_bytes =
         resident.total_byte_size +
         resident_projection_bytes_estimate +
@@ -10101,6 +10563,44 @@ const char* rusty_mlx_fastsmoke_generation_probe_json(
       out << "]";
       return out.str();
     };
+    auto cache_stats_json = [&]() {
+      std::ostringstream out;
+      out << "{"
+          << "\"cache_policy\":" << cache_policy_to_json(active_cache_policy) << ","
+          << "\"cache_object\":\"ChunkedExpandedKvCache\","
+          << "\"cache_backend\":\""
+          << (active_attention_mode == "0" ? "compact_cpu" : json_escape(active_attention_mode))
+          << "\","
+          << "\"kv_len\":" << kv_cache.positions_stored << ","
+          << "\"kv_len_from_layer_cache_interface\":" << cache_object_len_max << ","
+          << "\"kv_capacity\":" << kv_capacity_tokens << ","
+          << "\"kv_bytes_active\":" << kv_bytes_active << ","
+          << "\"kv_bytes_reserved\":" << kv_bytes_reserved << ","
+          << "\"kv_bytes_from_layer_cache_interface\":" << cache_object_nbytes_total << ","
+          << "\"mlx_expanded_kv_active_bytes\":" << logical_expanded_kv_bytes_active << ","
+          << "\"mlx_expanded_kv_reserved_bytes\":" << chunked_expanded_kv_active_bytes << ","
+          << "\"cpu_compact_kv_mirror_bytes\":" << cpu_compact_kv_mirror_bytes << ","
+          << "\"cpu_compact_kv_mirror_enabled\":"
+          << (cpu_compact_kv_mirror_enabled ? "true" : "false") << ","
+          << "\"cpu_compact_kv_mirror_policy\":\""
+          << (keep_cpu_kv_mirror()
+                ? "enabled_by_backend_or_RUSTY_KEEP_CPU_KV_MIRROR"
+                : "disabled_for_mlx_expanded_kv_backends")
+          << "\","
+          << "\"cache_total_bytes\":" << cache_total_bytes << ","
+          << "\"chunks_allocated\":" << chunked_allocated_chunks_total << ","
+          << "\"chunk_size\":" << chunk_size << ","
+          << "\"layer_count\":" << layers << ","
+          << "\"q_heads\":" << active_rope_config().num_attention_heads << ","
+          << "\"kv_heads\":" << active_rope_config().num_key_value_heads << ","
+          << "\"head_dim\":" << active_rope_config().head_dim << ","
+          << "\"arena_active_bytes\":0,"
+          << "\"arena_cached_bytes\":0,"
+          << "\"arena_peak_bytes\":0,"
+          << "\"arena_accounting\":\"not_implemented\""
+          << "}";
+      return out.str();
+    };
 
     std::vector<std::string> cpu_fallback_steps;
     for (const auto& step : mlx_quantized_linear_fallback_steps) {
@@ -10123,6 +10623,66 @@ const char* rusty_mlx_fastsmoke_generation_probe_json(
         fallback_steps_per_token.begin(),
         fallback_steps_per_token.end(),
         [](const auto& steps) { return !steps.empty(); });
+    std::uint64_t dominant_tail_token_id = 0;
+    std::uint64_t dominant_tail_token_count = 0;
+    std::uint64_t eos_best_rank_seen = 0;
+    std::uint64_t eos_final_rank = 0;
+    double entropy_min = 0.0;
+    double entropy_final = 0.0;
+    bool collapse_detected = false;
+    std::uint64_t first_collapse_token_index = 0;
+    std::string likely_cause = "unknown";
+    if (!repetition_diagnostics.empty()) {
+      entropy_min = repetition_diagnostics.front().entropy;
+      entropy_final = repetition_diagnostics.back().entropy;
+      eos_final_rank = repetition_diagnostics.back().eos_rank;
+      for (const auto& entry : repetition_diagnostics) {
+        entropy_min = std::min(entropy_min, entry.entropy);
+        if (entry.eos_rank > 0 &&
+            (eos_best_rank_seen == 0 || entry.eos_rank < eos_best_rank_seen)) {
+          eos_best_rank_seen = entry.eos_rank;
+        }
+        if (!collapse_detected &&
+            (entry.repeated_token_streak_current >= 16 ||
+             entry.low_id_token_count_so_far > entry.token_position / 2)) {
+          collapse_detected = true;
+          first_collapse_token_index = entry.token_position;
+        }
+      }
+      const std::size_t tail_start =
+          generated_ids.size() > 128 ? generated_ids.size() - 128 : 0;
+      std::unordered_map<std::uint64_t, std::uint64_t> tail_counts;
+      for (std::size_t i = tail_start; i < generated_ids.size(); ++i) {
+        const std::uint64_t count = ++tail_counts[generated_ids[i]];
+        if (count > dominant_tail_token_count) {
+          dominant_tail_token_count = count;
+          dominant_tail_token_id = generated_ids[i];
+        }
+      }
+      if (collapse_detected && repeated_token_streak_max >= 16) {
+        likely_cause = "repetition_penalty";
+      } else if (collapse_detected && eos_final_rank > 1000) {
+        likely_cause = "eos_buried_base_or_adapter";
+      } else if (collapse_detected && generation_sampling_config.enabled) {
+        likely_cause = "sampling_temperature";
+      }
+    }
+    auto collapse_summary_json = [&]() {
+      std::ostringstream out;
+      out << "{"
+          << "\"collapse_detected\":" << (collapse_detected ? "true" : "false") << ","
+          << "\"likely_cause\":\"" << json_escape(likely_cause) << "\","
+          << "\"first_collapse_token_index\":" << first_collapse_token_index << ","
+          << "\"dominant_tail_token_id\":" << dominant_tail_token_id << ","
+          << "\"dominant_tail_token_count\":" << dominant_tail_token_count << ","
+          << "\"eos_best_rank_seen\":" << eos_best_rank_seen << ","
+          << "\"eos_final_rank\":" << eos_final_rank << ","
+          << "\"entropy_min\":" << entropy_min << ","
+          << "\"entropy_final\":" << entropy_final << ","
+          << "\"max_repeated_streak\":" << repeated_token_streak_max
+          << "}";
+      return out.str();
+    };
     std::vector<std::string> resident_block_fallback_reasons;
     for (const auto& snapshot : diagnostic_snapshots) {
       for (const auto& reason : snapshot.result.per_layer_attention_fallback_reasons) {
@@ -10937,6 +11497,16 @@ const char* rusty_mlx_fastsmoke_generation_probe_json(
              << "\"generation_timing_bucket_summary\":"
              << generation_timing_bucket_summary_json(generation_timing_buckets, total_generation_ms) << ","
              << "\"long_decode_diagnostic_snapshots\":" << diagnostic_snapshots_json() << ","
+             << "\"repetition_penalty_supported\":false,"
+             << "\"repetition_penalty_active\":false,"
+             << "\"repetition_penalty_value\":1.0,"
+             << "\"repetition_penalty_applied_with_adapter\":false,"
+             << "\"repetition_penalty_generated_token_history_considered\":0,"
+             << "\"repetition_penalty_prompt_tokens_considered\":false,"
+             << "\"repetition_diagnostic_enabled\":"
+             << (repetition_diagnostic_enabled() ? "true" : "false") << ","
+             << "\"repetition_diagnostics\":" << repetition_diagnostics_json(repetition_diagnostics) << ","
+             << "\"repetition_collapse_summary\":" << collapse_summary_json() << ","
              << "\"total_generation_ms\":" << total_generation_ms << ","
              << "\"generation_1_total_ms\":" << total_generation_ms << ","
              << "\"generation_2_prompt_pass_ms\":" << second_prompt_pass_ms << ","
@@ -11082,6 +11652,7 @@ const char* rusty_mlx_fastsmoke_generation_probe_json(
              << "\"active_kv_bytes_estimate\":" << active_kv_bytes_estimate << ","
              << "\"total_estimated_model_runtime_bytes\":" << total_estimated_model_runtime_bytes
              << "},"
+             << "\"cache_stats\":" << cache_stats_json() << ","
              << "\"runtime_thread_diagnostics\":{"
              << "\"process_thread_count_start\":" << thread_count_start << ","
              << "\"process_thread_count_after_warmup\":" << thread_count_after_warmup << ","

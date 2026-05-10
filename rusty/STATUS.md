@@ -25,6 +25,22 @@ Branch: `main`
 - The default attention backend is `chunked_expanded_kv`.
 - `chunked_expanded_kv` allocates expanded q-head K/V in on-demand chunks
   instead of preallocating for the full requested `max_tokens` budget.
+- The active cache is now named behind a cache abstraction:
+  - `CachePolicy::Full { step }` is the implemented policy used by the
+    current `chunked_expanded_kv` full-context cache; `step` is the chunk
+    growth size, currently `256` by default.
+  - `Rotating { max_size, keep, step }`, `Quantized { bits, group_size,
+    start_at, base }`, and `Recompute { window }` are defined for future work
+    only.
+  - `Recompute` is diagnostic-only and must not become the default generation
+    policy.
+- Generation metadata includes `cache_stats` with active backend, KV length,
+  capacity, active/reserved bytes, chunk count/size, model geometry, and
+  placeholder transient scratch arena accounting.
+- `cache_stats` also separates MLX expanded K/V bytes from the optional CPU
+  compact K/V mirror. The CPU mirror is disabled by default for MLX expanded
+  K/V backends and can be restored for diagnostics/fallback with
+  `RUSTY_KEEP_CPU_KV_MIRROR=1`.
 - Default chunk size is `256`; override with `RUSTY_KV_CHUNK_SIZE`.
 - `RUSTY_ATTENTION_BACKEND=expanded_kv` is retained for explicit diagnostics
   only; do not use it as a normal benchmark path.
@@ -32,11 +48,59 @@ Branch: `main`
   fallback and diagnostic only; do not run it in normal development loops.
 - The native generation helper must not run old second-generation proof paths
   unless explicitly requested with `RUSTY_VERIFY_SECOND_GENERATION=1`.
+- Important correction, 2026-05-10: after disabling the CPU compact K/V mirror,
+  the active decode path still derived RoPE position from the CPU mirror
+  (`layer.keys.size()`). With the mirror disabled this stayed at zero and
+  corrupted multi-token prompt/decode attention. The active path now derives
+  RoPE position through the cache abstraction (`ChunkedExpandedKvCache::len()`).
+  The exact Southwick prompt parity check now matches Python/MLX top token and
+  top-10:
+  - prompt: `Who are Southwick and Tommy?`
+  - prompt ids: `[151644,872,198,15191,220,546,220,25018,21188,220,437,220,24732,2408,30,151645,198,151644,77091,198]`
+  - Rusty top token: `2121`
+  - Python/MLX top token: `2121`
+  - top-10 overlap: `10/10`
+
+## KV/Cache Benchmark Validity After RoPE-Position Fix
+
+- Any KV/cache quality, parity, or attention-behavior conclusion recorded
+  after the CPU K/V mirror was disabled and before the RoPE-position fix is
+  suspect.
+- Memory allocation numbers from those runs may still be useful as rough
+  allocation evidence, but output quality, long-context collapse, speed, and
+  attention timing should not be used as final conclusions unless rerun after
+  the fix.
+- Do revalidate:
+  - the corrected current default `chunked_expanded_kv` memory/speed/quality
+    baseline,
+  - any future KV strategy that changes cache length accounting,
+  - any test that disables the CPU K/V mirror or changes cache append/fetch
+    behavior.
+- Do not revalidate:
+  - tokenizer special-token/newline handling,
+  - Qwen q_norm/k_norm-before-RoPE ordering,
+  - adapter metadata/loading wiring, except for a short adapter-active parity
+    check when adapter quality is being evaluated,
+  - thread-env tests,
+  - full resident block and narrow resident gates unless their execution
+    structure becomes relevant again.
+- Restart memory work from the corrected active path only:
+  1. establish one fresh corrected `chunked_expanded_kv` baseline,
+  2. keep Southwick top-token/top-10 parity as a guardrail,
+  3. investigate compact/chunked MLX K/V storage without changing full-context
+     semantics,
+  4. avoid rotating/eviction policies until full-context compact storage has
+     been evaluated.
 
 ## Recorded Runtime Baselines
 
 These are records. Do not rerun these old paths in normal tests just to compare
 timings.
+
+Warning: several recorded KV/cache runtime baselines below may predate the
+RoPE-position fix described above. Treat them as historical records, not as
+current active-path proof. Re-establish the corrected current default baseline
+before making new memory/speed decisions.
 
 - Problem scenario:
   - prompt: `what are the important emotions?`
@@ -148,6 +212,11 @@ timings.
 - Chunked expanded K/V still uses concat of active chunks during attention;
   future work can add chunk-aware attention or spill/swap old chunks.
 - `compact_mlx` / swapped K/V is a future backend, not implemented yet.
+- Rotating K/V and quantized K/V are future policies only. The current default
+  remains the full-context chunked expanded K/V cache.
+- Transient layer/token scratch accounting is exposed as placeholder fields
+  (`arena_active_bytes`, `arena_cached_bytes`, `arena_peak_bytes`) but is not
+  implemented yet.
 - Runtime thread count is currently about 6 on this machine, while Python MLX
   has been observed around 21 threads; this is diagnostic context, not the
   next optimization target until memory policy is stable.

@@ -42,6 +42,7 @@ generate_prompt_rusty_ite:
   quantized_model_dir: build/model4
   output_file_prefix: prompt_rusty
   chat: true
+  prompt_text: [ UI_textarea, "" ]
   system_prompt:
   mlx:
     max-tokens: 256

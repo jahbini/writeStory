@@ -345,7 +345,15 @@ async function main() {
 
     if (verifierProfile === 'parity') {
       logSkippedProbe('fastsmoke/smoke generation probes', 'profile parity runs only Rusty-vs-reference logits diagnostics');
-      const promptTokenIds = [151644, 872, 198, 14990, 151645, 198, 151644, 77091, 198];
+      const promptTokenIds = process.env.RUSTY_PARITY_PROMPT_TOKENS
+        ? process.env.RUSTY_PARITY_PROMPT_TOKENS
+            .split(',')
+            .map((entry) => Number(entry.trim()))
+            .filter((entry) => Number.isInteger(entry))
+        : [151644, 872, 198, 14990, 151645, 198, 151644, 77091, 198];
+      if (!Array.isArray(promptTokenIds) || promptTokenIds.length === 0) {
+        throw new Error('RUSTY_PARITY_PROMPT_TOKENS did not contain any integer token ids');
+      }
       const referenceScriptPath = path.join(__dirname, 'reference_logits_mlx_lm.py');
       const referenceJsonPath = process.env.RUSTY_PARITY_REFERENCE_JSON
         ? path.resolve(process.env.RUSTY_PARITY_REFERENCE_JSON)
