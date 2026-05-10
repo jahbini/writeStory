@@ -1,0 +1,333 @@
+
+<canvas id="c" style="display:block;width:100%;height:500px;border-radius:8px"></canvas>
+<div style="display:flex;justify-content:center;gap:28px;margin-top:10px;flex-wrap:wrap">
+  <span style="font-size:12px;color:var(--color-text-secondary)"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#85B7EB;margin-right:5px;vertical-align:middle"></span>neuron ring</span>
+  <span style="font-size:12px;color:var(--color-text-secondary)"><span style="display:inline-block;width:22px;height:1px;background:#9FE1CB;margin-right:5px;vertical-align:middle"></span>web</span>
+  <span style="font-size:12px;color:var(--color-text-secondary)"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#FAC775;margin-right:5px;vertical-align:middle"></span>Paris</span>
+  <span style="font-size:12px;color:var(--color-text-secondary)"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#F0997B;margin-right:5px;vertical-align:middle"></span>V extracted</span>
+</div>
+<script>
+const canvas = document.getElementById('c');
+const dpr = window.devicePixelRatio || 1;
+function resize() {
+  canvas.width = canvas.offsetWidth * dpr;
+  canvas.height = canvas.offsetHeight * dpr;
+}
+resize();
+const ctx = canvas.getContext('2d');
+const W = () => canvas.width / dpr;
+const H = () => canvas.height / dpr;
+
+const LAYERS = 12;
+const NR = 16;
+const CONNS = 24;
+
+function seeded(n) {
+  let x = Math.sin(n * 127.1 + 311.7) * 43758.5453;
+  return x - Math.floor(x);
+}
+
+function layerX(i) { return W() * 0.09 + (i / (LAYERS - 1)) * W() * 0.76; }
+const TILT = 0.28;
+function ringRadius() { return Math.min(W(), H()) * 0.155; }
+
+function neuronPos(layer, n) {
+  const angle = (n / NR) * Math.PI * 2 + layer * 0.11;
+  const r = ringRadius();
+  return {
+    x: layerX(layer),
+    y: H() / 2 + Math.sin(angle) * r * TILT,
+    angle
+  };
+}
+
+function buildNeurons() {
+  const all = [];
+  for (let l = 0; l < LAYERS; l++) {
+    const ring = [];
+    for (let n = 0; n < NR; n++) ring.push(neuronPos(l, n));
+    all.push(ring);
+  }
+  return all;
+}
+
+function buildConns(neurons) {
+  const conns = [];
+  for (let l = 0; l < LAYERS - 1; l++) {
+    for (let c = 0; c < CONNS; c++) {
+      const fi = Math.floor(seeded(l * 500 + c * 13) * NR);
+      const ti = Math.floor(seeded(l * 500 + c * 13 + 7) * NR);
+      const cpx = (neurons[l][fi].x + neurons[l+1][ti].x) / 2 + (seeded(l*500+c*13+3)-0.5)*32;
+      const cpy = (neurons[l][fi].y + neurons[l+1][ti].y) / 2 + (seeded(l*500+c*13+5)-0.5)*24;
+      conns.push({ l, fi, ti, cpx, cpy });
+    }
+  }
+  return conns;
+}
+
+let neurons = buildNeurons();
+let conns = buildConns(neurons);
+
+let neuronBrightness = [];
+let neuronFlickerSpeed = [];
+let neuronFlickerPhase = [];
+for (let l = 0; l < LAYERS; l++) {
+  neuronBrightness.push([]);
+  neuronFlickerSpeed.push([]);
+  neuronFlickerPhase.push([]);
+  for (let n = 0; n < NR; n++) {
+    neuronBrightness[l].push(0.15 + seeded(l*100+n) * 0.55);
+    neuronFlickerSpeed[l].push(0.4 + seeded(l*100+n+50) * 2.2);
+    neuronFlickerPhase[l].push(seeded(l*100+n+99) * Math.PI * 2);
+  }
+}
+
+let t = 0;
+let lastTs = null;
+
+let paris = {
+  active: false,
+  progress: 0,
+  wobbleX: 0,
+  wobbleY: 0,
+  wobbleVX: 0,
+  wobbleVY: 0,
+  squirmPhase: 0,
+  trail: []
+};
+
+let vParticles = [];
+let bgPulses = [];
+let lastBgSpawn = -99;
+
+function startParis() {
+  paris = {
+    active: true,
+    progress: 0,
+    wobbleX: 0,
+    wobbleY: 0,
+    wobbleVX: (Math.random()-0.5)*0.4,
+    wobbleVY: (Math.random()-0.5)*0.4,
+    squirmPhase: 0,
+    trail: []
+  };
+}
+
+function updateParis(dt) {
+  if (!paris.active) return;
+
+  const speed = 0.072;
+  paris.progress += dt * speed;
+  paris.squirmPhase += dt * 4.2;
+
+  const maxWobble = ringRadius() * 0.38;
+  const resistance = 0.018 + paris.progress * 0.008;
+
+  paris.wobbleVX += (Math.random()-0.5) * 0.55;
+  paris.wobbleVY += (Math.random()-0.5) * 0.55;
+  paris.wobbleVX *= (1 - resistance);
+  paris.wobbleVY *= (1 - resistance);
+
+  paris.wobbleX += paris.wobbleVX * dt * 28;
+  paris.wobbleY += paris.wobbleVY * dt * 28;
+
+  const dist = Math.sqrt(paris.wobbleX**2 + paris.wobbleY**2);
+  if (dist > maxWobble) {
+    paris.wobbleX = (paris.wobbleX / dist) * maxWobble;
+    paris.wobbleY = (paris.wobbleY / dist) * maxWobble;
+    paris.wobbleVX *= -0.4;
+    paris.wobbleVY *= -0.4;
+  }
+
+  const px = layerX(paris.progress * (LAYERS-1)) + paris.wobbleX;
+  const py = H()/2 + paris.wobbleY;
+  paris.trail.push({ x: px, y: py, age: 0 });
+  for (const pt of paris.trail) pt.age += dt;
+  paris.trail = paris.trail.filter(pt => pt.age < 0.55);
+
+  if (paris.progress >= 1) {
+    paris.active = false;
+    for (let n = 0; n < NR; n += 3) {
+      vParticles.push({ born: t + seeded(n)*0.25, n, vx: 28+Math.random()*18, vy: (Math.random()-0.5)*12 });
+    }
+    setTimeout(() => {
+      vParticles = [];
+      setTimeout(startParis, 1100);
+    }, 2400);
+  }
+}
+
+function parisScreenPos() {
+  if (!paris.active) return null;
+  return {
+    x: layerX(paris.progress * (LAYERS-1)) + paris.wobbleX,
+    y: H()/2 + paris.wobbleY
+  };
+}
+
+function draw() {
+  ctx.save();
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, W(), H());
+
+  ctx.fillStyle = '#0c1118';
+  ctx.fillRect(0, 0, W(), H());
+
+  const pp = parisScreenPos();
+
+  for (const conn of conns) {
+    const fn = neurons[conn.l][conn.fi];
+    const tn = neurons[conn.l+1][conn.ti];
+
+    let glow = 0;
+    for (const bp of bgPulses) {
+      const age = t - bp.born;
+      const lf = age / 1.3;
+      const dist = Math.abs(lf - conn.l - 0.5);
+      if (dist < 1.4) glow = Math.max(glow, (1 - dist/1.4) * 0.12);
+    }
+    if (pp) {
+      const pLayer = paris.progress * (LAYERS-1);
+      const dist = Math.abs(pLayer - conn.l - 0.5);
+      if (dist < 2.0) glow = Math.max(glow, (1 - dist/2.0) * 0.28);
+    }
+
+    const alpha = 0.04 + glow;
+    ctx.beginPath();
+    ctx.moveTo(fn.x, fn.y);
+    ctx.quadraticCurveTo(conn.cpx, conn.cpy, tn.x, tn.y);
+    ctx.strokeStyle = `rgba(93,202,165,${alpha})`;
+    ctx.lineWidth = 0.4 + glow * 1.2;
+    ctx.stroke();
+  }
+
+  for (let l = 0; l < LAYERS; l++) {
+    const ring = neurons[l];
+    let ringGlow = 0;
+    if (pp) {
+      const pLayer = paris.progress * (LAYERS-1);
+      const dist = Math.abs(pLayer - l);
+      if (dist < 1.3) ringGlow = (1 - dist/1.3) * 0.42;
+    }
+
+    for (let n = 0; n < NR; n++) {
+      const nd = ring[n];
+      const flicker = neuronBrightness[l][n] *
+        (0.55 + 0.45 * Math.sin(t * neuronFlickerSpeed[l][n] + neuronFlickerPhase[l][n])) *
+        (0.7 + 0.3 * Math.sin(t * neuronFlickerSpeed[l][n] * 2.7 + neuronFlickerPhase[l][n] + 1.1));
+
+      const depthFade = 0.3 + Math.abs(Math.sin(nd.angle)) * 0.4;
+      const alpha = flicker * depthFade + ringGlow * 0.7;
+      const r = 1.6 + flicker * 1.4 + ringGlow * 2.0;
+
+      ctx.beginPath();
+      ctx.arc(nd.x, nd.y, r, 0, Math.PI*2);
+      ctx.fillStyle = ringGlow > 0.1
+        ? `rgba(200,225,248,${Math.min(alpha,0.9)})`
+        : `rgba(133,183,235,${Math.min(alpha,0.75)})`;
+      ctx.fill();
+    }
+  }
+
+  if (paris.trail.length > 1) {
+    for (let i = 1; i < paris.trail.length; i++) {
+      const pt = paris.trail[i];
+      const alpha = Math.max(0, (0.55 - pt.age) / 0.55) * 0.35;
+      const r = 2.5 * (1 - pt.age/0.55);
+      ctx.beginPath();
+      ctx.arc(pt.x, pt.y, r, 0, Math.PI*2);
+      ctx.fillStyle = `rgba(250,199,117,${alpha})`;
+      ctx.fill();
+    }
+  }
+
+  if (pp) {
+    const squirmOff = Math.sin(paris.squirmPhase) * 1.8;
+    const pulse = 0.82 + 0.18 * Math.sin(t * 5.5);
+
+    ctx.beginPath();
+    ctx.arc(pp.x + squirmOff * 0.4, pp.y + squirmOff, 9 * pulse, 0, Math.PI*2);
+    ctx.fillStyle = `rgba(250,199,117,0.08)`;
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.arc(pp.x + squirmOff * 0.25, pp.y + squirmOff * 0.6, 4.5, 0, Math.PI*2);
+    ctx.fillStyle = `rgba(250,199,117,0.88)`;
+    ctx.fill();
+
+    ctx.font = `400 11px var(--font-sans,sans-serif)`;
+    ctx.fillStyle = `rgba(250,199,117,0.65)`;
+    ctx.textAlign = 'center';
+    ctx.fillText('Paris', pp.x, pp.y - 14);
+  }
+
+  for (const v of vParticles) {
+    const age = t - v.born;
+    if (age < 0) continue;
+    const alpha = Math.max(0, 0.85 - age * 0.55);
+    if (alpha <= 0) continue;
+    const lastRing = neurons[LAYERS-1];
+    const origin = lastRing[v.n];
+    const vx = origin.x + v.vx * age + 14;
+    const vy = origin.y + v.vy * age;
+    ctx.beginPath();
+    ctx.arc(vx, vy, 4, 0, Math.PI*2);
+    ctx.fillStyle = `rgba(240,153,123,${alpha})`;
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(origin.x + 4, origin.y);
+    ctx.lineTo(vx - 4, vy);
+    ctx.strokeStyle = `rgba(240,153,123,${alpha * 0.35})`;
+    ctx.lineWidth = 0.8;
+    ctx.stroke();
+  }
+
+  ctx.font = `400 10px var(--font-sans,sans-serif)`;
+  ctx.textAlign = 'center';
+  for (let l = 0; l < LAYERS; l++) {
+    const ring = neurons[l];
+    const topY = Math.min(...ring.map(n => n.y)) - 7;
+    ctx.fillStyle = 'rgba(133,183,235,0.28)';
+    ctx.fillText(`L${l+1}`, layerX(l), topY);
+  }
+
+  ctx.font = `400 11px var(--font-sans,sans-serif)`;
+  ctx.fillStyle = 'rgba(133,183,235,0.38)';
+  ctx.textAlign = 'right';
+  ctx.fillText('token in →', layerX(0) - 12, H()/2 + 4);
+  ctx.fillStyle = 'rgba(240,153,123,0.5)';
+  ctx.textAlign = 'left';
+  ctx.fillText('→ V out', layerX(LAYERS-1) + 12, H()/2 + 4);
+
+  ctx.restore();
+}
+
+let animRunning = true;
+function frame(ts) {
+  if (!lastTs) lastTs = ts;
+  const dt = Math.min((ts - lastTs) / 1000, 0.05);
+  lastTs = ts;
+  t += dt;
+
+  if (!paris.active && t > 0.8 && paris.progress === 0) startParis();
+
+  updateParis(dt);
+
+  if (t - lastBgSpawn > 3.2 + Math.random() * 1.8) {
+    bgPulses.push({ born: t });
+    lastBgSpawn = t;
+  }
+  bgPulses = bgPulses.filter(bp => (t - bp.born) < LAYERS * 1.3 + 0.5);
+  vParticles = vParticles.filter(v => (t - v.born) < 1.6);
+
+  draw();
+  if (animRunning) requestAnimationFrame(frame);
+}
+
+requestAnimationFrame(frame);
+window.addEventListener('resize', () => {
+  resize();
+  neurons = buildNeurons();
+  conns = buildConns(neurons);
+});
+</script>
