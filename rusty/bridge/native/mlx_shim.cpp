@@ -553,12 +553,12 @@ struct GenerationTimingBuckets {
         result.final_norm_ms;
     const std::uint64_t layer_steps =
         static_cast<std::uint64_t>(result.per_layer_attention_ms.size());
-    qkv_sync_count += layer_steps;
+    qkv_sync_count += result.qkv_projection_ms > 0.0 ? layer_steps : 0;
     // Chunk append updates are now deferred into the following attention eval.
     attention_append_sync_count += 0;
     attention_eval_sync_count += result.attention_eval_sync_ms > 0.0 ? layer_steps : 0;
-    o_residual_sync_count += layer_steps;
-    mlp_residual_sync_count += layer_steps;
+    o_residual_sync_count += result.o_projection_ms > 0.0 ? layer_steps : 0;
+    mlp_residual_sync_count += result.down_projection_ms > 0.0 ? layer_steps : 0;
     logits_sync_count += result.logits_projection_ms > 0.0 ? 1 : 0;
     final_readback_sync_count += result.final_norm_ms > 0.0 ? 1 : 0;
     tokens += 1;
@@ -590,13 +590,13 @@ std::string generation_timing_bucket_summary_json(
     const char* reason;
   };
   std::vector<SyncSite> sync_sites{
-      {"attention_eval_sync", buckets.attention_eval_sync_count, buckets.attention_eval_sync_ms, "materialize chunked attention output for CPU vector boundary"},
-      {"qkv_projection_eval_sync", buckets.qkv_sync_count, buckets.qkv_ms, "materialize q/k/v for q_norm/k_norm/RoPE and KV append"},
+      {"attention_eval_sync", buckets.attention_eval_sync_count, buckets.attention_eval_sync_ms, "attention/KV eval synchronization"},
+      {"qkv_projection_eval_sync", buckets.qkv_sync_count, buckets.qkv_ms, "q/k/v projection plus q_norm/RoPE expression construction/eval"},
       {"mlp_down_residual_eval_sync", buckets.mlp_residual_sync_count, buckets.mlp_down_ms, "materialize MLP residual output as next layer state"},
-      {"o_projection_residual_eval_sync", buckets.o_residual_sync_count, buckets.o_proj_ms, "materialize attention residual before post-attention norm"},
-      {"logits_eval_sync", buckets.logits_sync_count, buckets.logits_sampling_ms, "materialize logits for token selection"},
-      {"final_norm_readback_sync", buckets.final_readback_sync_count, buckets.sync_readback_ms, "final checksum/logits input readback"},
-      {"attention_append_sync", buckets.attention_append_sync_count, 0.0, "deferred into attention eval for chunked_expanded_kv"}
+      {"o_projection_residual_eval_sync", buckets.o_residual_sync_count, buckets.o_proj_ms, "o_proj/residual expression construction"},
+      {"logits_eval_sync", buckets.logits_sync_count, buckets.logits_sampling_ms, "select top-k ids/scores for token selection"},
+      {"final_norm_readback_sync", buckets.final_readback_sync_count, buckets.sync_readback_ms, "diagnostic final checksum readback"},
+      {"attention_append_sync", buckets.attention_append_sync_count, 0.0, "deferred into attention eval for chunked compact K/V"}
   };
   std::sort(sync_sites.begin(), sync_sites.end(), [](const SyncSite& a, const SyncSite& b) {
     return a.ms > b.ms;
@@ -650,14 +650,14 @@ std::string generation_timing_bucket_summary_json(
       << "],"
       << "\"buckets\":["
       << item("qkv", buckets.qkv_ms, "metal") << ","
-      << item("q_norm/k_norm/RoPE", buckets.qk_norm_rope_ms, "cpu") << ","
+      << item("q_norm/k_norm/RoPE", buckets.qk_norm_rope_ms, "metal") << ","
       << item("attention_append_update", buckets.attention_append_ms, "mixed") << ","
       << item("attention_matmul_softmax_value_mix", buckets.attention_math_ms, "metal") << ","
       << item("attention_kv_chunk_view_assembly", buckets.attention_kv_view_assembly_ms, "metal") << ","
       << item("attention_score_matmul", buckets.attention_score_matmul_ms, "metal") << ","
       << item("attention_softmax", buckets.attention_softmax_detail_ms, "metal") << ","
       << item("attention_value_mix_matmul", buckets.attention_value_mix_matmul_ms, "metal") << ","
-      << item("attention_reshape_flatten", buckets.attention_reshape_flatten_ms, "cpu") << ","
+      << item("attention_reshape_flatten", buckets.attention_reshape_flatten_ms, "metal") << ","
       << item("attention_eval_sync", buckets.attention_eval_sync_ms, "mixed") << ","
       << item("o_proj", buckets.o_proj_ms, "metal") << ","
       << item("MLP_gate_up", buckets.mlp_gate_up_ms, "metal") << ","
@@ -7351,7 +7351,7 @@ ResidentDecodeValue layer_decode_value_resident_incremental_from_input(
         timing->attention_softmax_detail_ms += attention_detail_timing.softmax_ms;
         timing->attention_value_mix_matmul_ms += attention_detail_timing.value_mix_matmul_ms;
         timing->attention_reshape_flatten_ms += attention_detail_timing.reshape_flatten_ms;
-        timing->attention_eval_sync_ms += attention_detail_timing.eval_sync_ms + mlp_timing.down_eval_ms;
+        timing->attention_eval_sync_ms += attention_detail_timing.eval_sync_ms;
         timing->o_projection_ms += o_ms;
         timing->gate_up_projection_ms += mlp_timing.gate_up_eval_ms + mlp_timing.setup_ms;
         timing->gate_up_activation_ms += mlp_timing.activation_eval_ms;

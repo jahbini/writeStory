@@ -106,6 +106,12 @@ Do not borrow:
 - `Makefile`
   - `make verify` runs the local verifier
 
+## How the LLM chain fits together
+
+For a short end-to-end map from prompt_ite orchestration through tokenizer,
+native session, adapter, KV cache, decode, sampling, and UI metadata, see
+`LLM_CHAIN.md`.
+
 ## What is intentionally not implemented yet
 
 - production generation wiring

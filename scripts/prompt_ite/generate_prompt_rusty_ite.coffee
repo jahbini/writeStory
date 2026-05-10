@@ -284,6 +284,9 @@ resolvePrompt = (L) ->
         active_native_tokenizers: generation.active_native_tokenizers
         memory_diagnostics: generation.memory_diagnostics
         cache_stats: generation.cache_stats
+        generation_timing_bucket_summary: generation.generation_timing_bucket_summary
+        last_token_timing_buckets_ms: generation.last_token_timing_buckets_ms
+        last_token_attention_backends_per_layer: generation.last_token_attention_backends_per_layer
         warmup_ms: warm.warmup_ms
         warmup_reused: warm.reused
         generation_timing_ms: generation.generation_1_total_ms ? generation.total_generation_ms
