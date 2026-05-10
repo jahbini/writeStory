@@ -212,9 +212,10 @@ before making new memory/speed decisions.
 
 ## Current Limitations
 
-- Chunked compact K/V still uses concat of active compact chunks during
-  attention and expands to q-head layout at attention time; future work can add
-  chunk-aware attention or spill/swap old chunks.
+- Chunked compact K/V now uses chunk-aware streaming-softmax attention by
+  default, avoiding concat of active compact chunks. Force the old concat path
+  only for diagnostics with `RUSTY_FORCE_COMPACT_CONCAT_ATTENTION=1` or
+  `RUSTY_DISABLE_CHUNK_AWARE_ATTENTION=1`.
 - `chunked_compact_mlx` is the promoted default backend. It stores K/V chunks
   as `[kv_heads, chunk_size, head_dim]`. `chunked_expanded_kv` remains
   available only as an explicit diagnostic/benchmark backend.
@@ -228,6 +229,27 @@ before making new memory/speed decisions.
   - recorded expanded reserved K/V bytes: `1,207,959,552`
   - byte ratio: `0.25` (expected 4x GQA reduction)
   - CPU K/V mirror: disabled, fallbacks: none, cleanup: clean
+- Chunk-aware compact attention diagnostic:
+  - one-layer parity probe passed with top-token match and top-10 overlap `10/10`
+  - concat compact attention timing: `0.371 ms`
+  - chunk-aware streaming-softmax timing: `2.171 ms`
+  - max diff vs concat compact: `2.98e-8`
+  - concat was avoided, but the MLX expression form is slower due to eval/sync
+    structure
+  - one-layer status: correct diagnostic only; one-layer timing was not enough
+    to judge all-layer long-context behavior
+- All-layer chunk-aware attention gate validation:
+  - former gate: `RUSTY_EXPERIMENTAL_CHUNK_AWARE_ATTENTION=1`
+  - prompt/settings: `what are the important emotions?`, `max_tokens=2000`,
+    `temp=0.7`, `top_k=40`, `seed=1234`
+  - generated tokens: `757`, stop reason: `eos`
+  - timing: `114,492 ms`, `6.61 tok/s`
+  - recorded compact concat baseline: `138,771 ms`, `5.46 tok/s`
+  - speed ratio vs recorded compact default: `0.825` (about `17.5%` faster)
+  - cache total bytes unchanged: `301,989,888`
+  - observed max memory: about `4.1 GB`
+  - CPU K/V mirror: disabled, fallbacks: none, cleanup: clean
+  - status: promoted as default inside `chunked_compact_mlx`
 - Swapped K/V is still a future backend, not implemented yet.
 - Rotating K/V and quantized K/V are future policies only. The current default
   remains full-context retention, now through the compact MLX chunk cache.

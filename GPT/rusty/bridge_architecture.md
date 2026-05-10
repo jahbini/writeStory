@@ -123,14 +123,21 @@ Current status:
 - default attention backend is chunked compact K/V on MLX/Metal
 - current default K/V cache behavior is full-context retention implemented by
   `chunked_compact_mlx`
-- `chunked_compact_mlx` stores K/V chunks at `kv_heads` and expands to q-head
-  layout at attention time. `chunked_expanded_kv` remains available by explicit
-  env override for diagnostics/benchmarking.
+- `chunked_compact_mlx` stores K/V chunks at `kv_heads` and uses chunk-aware
+  streaming-softmax attention by default, avoiding concat of active compact
+  chunks. Force the old concat path only for diagnostics with
+  `RUSTY_FORCE_COMPACT_CONCAT_ATTENTION=1` or
+  `RUSTY_DISABLE_CHUNK_AWARE_ATTENTION=1`.
+- `chunked_expanded_kv` remains available by explicit env override for
+  diagnostics/benchmarking.
 - Current compact validation evidence: same long prompt/settings as the
   corrected active baseline generated `757` tokens to EOS with no fallbacks;
   compact K/V reserved bytes were `301,989,888` versus recorded expanded
   reserved bytes `1,207,959,552`, with timing `138,771 ms` (`5.46 tok/s`)
   versus recorded expanded timing `142,435 ms` (`5.31 tok/s`).
+- Current chunk-aware compact evidence: same long prompt/settings generated
+  `757` tokens to EOS with no fallbacks; timing was `114,492 ms` (`6.61 tok/s`)
+  with the same compact K/V reserved bytes `301,989,888`.
 - rotating, quantized, swapped, and recompute modes are future/diagnostic
   concepts only
 - CPU and full-expanded K/V paths remain available only as diagnostics
