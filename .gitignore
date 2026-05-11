@@ -13,6 +13,8 @@ rusty/**/release/
 rusty/**/tmp/
 rusty/**/logs/
 rusty/**/mlx_smoke
+metal/*.node
+metal/build/
 
 node_modules/
 pipes/
