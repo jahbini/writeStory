@@ -3,8 +3,10 @@ import numpy as np
 from mlx_lm.utils import load as mlx_load
 from pathlib import Path
 
-# Load model
-model, _ = mlx_load(str(Path(__file__).resolve().parent.parent / "loraland" / "phi-1_5"))
+# Load model.
+# Warning: this diagnostic may allocate a full MLX-LM model. It is not part of
+# the safe addon smoke path.
+model, _ = mlx_load(str(Path(__file__).resolve().parent.parent / "pipes" / "Qwen_Qwen3-4B-Instruct-2507" / "build" / "model4"))
 attn = model.model.layers[0].self_attn
 rope = attn.rope
 

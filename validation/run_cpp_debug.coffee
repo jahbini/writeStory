@@ -24,8 +24,10 @@ tokens = tokenizer.encode prompt
 console.log "prompt:", prompt
 console.log "tokens:", tokens, tokenizer.decode tokens
 
-# Create Metal session (same model path you use elsewhere)
-modelPath = path.resolve __dirname, '../loraland/phi-1_5'
+# Create Metal session (same model path you use elsewhere).
+# Warning: the legacy loadModel path is not yet memory-safe for Qwen-sized
+# models; use this diagnostic only after the loader has been redesigned.
+modelPath = path.resolve __dirname, '../pipes/Qwen_Qwen3-4B-Instruct-2507/build/model4'
 session   = createSession modelPath: modelPath
 
 # Drive the model one token at a time; C++ side should dump into debug_cpp
