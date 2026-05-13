@@ -4,7 +4,8 @@
       "target_name": "metal_llm",
       "sources": [
         "metal/metal_llm.cpp",
-        "metal/metal_llm_node.cpp"
+        "metal/metal_llm_node.cpp",
+        "metal/direct_metal_probe.mm"
       ],
       "product_dir": "../metal",
       "cflags_cc": [
@@ -15,15 +16,17 @@
       "include_dirs": [
          "<!(node -p \"require('node-addon-api').include\")",
          "<!(node -p \"require('node-addon-api').include_dir\")",
-         "/opt/homebrew/include",
+         "<!(node -e \"var fs=require('fs');process.stdout.write(fs.existsSync('mlx/build/libmlx.a')?'mlx':'/opt/homebrew/include')\")",
          "./metal"
        ],
        "dependencies": [
          "<!(node -p \"require('node-addon-api').gyp\")"
        ],
       "libraries": [
-        "-L/opt/homebrew/lib",
-        "-lmlx"
+        "<!@(node -e \"var fs=require('fs'),p=require('path');var a=p.resolve('mlx/build/libmlx.a');if(fs.existsSync(a))console.log(a);else{console.log('-L/opt/homebrew/lib');console.log('-lmlx');}\")",
+        "-framework Metal",
+        "-framework Foundation",
+        "-framework Accelerate"
       ],
       "xcode_settings": {
 	      "MACOSX_DEPLOYMENT_TARGET": "15.0",

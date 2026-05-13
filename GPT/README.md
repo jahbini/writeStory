@@ -23,11 +23,15 @@ Rules:
   long-generation CPU attention and full preallocated `expanded_kv` for
   `max_tokens=2000`, and MLX/OMP/VECLIB/RAYON thread-count runs at 8 and 12;
   normal tests should exercise the active current path.
-- repository-level runtime tests are coordinated through root `test.sh`.
-  Codex owns that file's contents and should replace it as needed for the
-  current task, record every test's `.log` and `.err` output explicitly, and
-  tell the human to run `./test.sh`. Put temporary helper scripts under
-  `test/`. If Python is needed, `test.sh` must activate `.venv` first with
+- repository-level runtime verification is coordinated through root
+  `test.sh`. The script is committed and stable — it rebuilds the native
+  addon (`npx node-gyp rebuild`) and runs the 64-token gypsy generation
+  probe at `test/helpers/native_64_mlx_lazy_generation_probe.coffee`. Treat
+  it as the canonical "did the build work" command. Task-specific or
+  exploratory test helpers go under `test/` (which is gitignored). When a
+  test step is added to `test.sh`, record every step's `.log` and `.err`
+  output under `test/logs/<run_id>/` so the result is auditable. If Python
+  is ever needed, the script must activate `.venv` first with
   `source .venv/bin/activate`.
 
 Current repository assumptions worth preserving:

@@ -193,6 +193,29 @@ Start with:
 
 - [GPT/README.md](./GPT/README.md)
 
+## Building The Native Generation Path
+
+The CoffeeScript pipeline itself does not require a build. The native
+generation path (`generate_prompt_gypsy_ite`, the test probes) depends on a
+small C++/Metal addon at `metal/metal_llm.node` that is *not* checked in
+and must be built locally.
+
+```bash
+brew install mlx         # one-time per machine
+npx node-gyp rebuild     # build the addon (every time native sources change)
+bash test.sh             # rebuild + run a 64-token probe end-to-end
+```
+
+`build/` (node-gyp output) and `metal/*.node` (the linked addon) are
+gitignored — they are derived artifacts, platform-specific, and regenerable
+from the tracked sources (`binding.gyp` plus the files under `metal/`).
+
+See [BUILD.md](BUILD.md) for full prerequisites, the optional dev-aid
+local MLX checkout, and common failure modes. The live status of the
+native path is in [gypsy/STATUS.md](gypsy/STATUS.md), and the design
+standards derived from that work are in
+[GPT/gypsy_strategy.md](GPT/gypsy_strategy.md).
+
 ## Repository Notes
 
 - `README_SETUP.md` is an older minimal setup note and does not describe the current pipe-based workflow.

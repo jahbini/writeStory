@@ -12,6 +12,7 @@
     "test": "pnpm build && coffee validation/runtime_smoke.coffee",
     "pipeline": "coffee pipeline_runner.coffee",
     "pipeline:test": "coffee pipeline_runner.coffee test",
+    "postinstall": "npx node-gyp rebuild",
     "compare:cpp": "coffee validation/compare_debug_vectors.coffee"
   },
   "keywords": [],
