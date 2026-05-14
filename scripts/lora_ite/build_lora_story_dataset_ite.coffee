@@ -86,12 +86,26 @@ USER_TEMPLATES = [
 # A deterministic rotation over USER_TEMPLATES indexed by row count + storyID.
 # Deterministic so a re-run with the same data produces identical rows
 # (important for reproducible LoRA training).
+#
+# storyID may be numeric or a non-numeric string; derive a stable numeric
+# offset from a char-code sum so different stories start at different
+# template offsets without ever producing NaN (which would index the
+# template array out of bounds and yield `undefined`).
+storyOffset = (storyID) ->
+  key = String(storyID ? '')
+  sum = 0
+  sum += key.charCodeAt(i) for i in [0...key.length]
+  sum
+
 pickTemplate = (rowIndex, storyID) ->
-  storyKey = String(storyID ? '').length + Number(storyID ? 0)
-  USER_TEMPLATES[(rowIndex + storyKey) %% USER_TEMPLATES.length]
+  index = (rowIndex + storyOffset(storyID)) %% USER_TEMPLATES.length
+  USER_TEMPLATES[index]
 
 makeChatRow = (promptText, completionText, rowIndex, storyID) ->
   template = pickTemplate rowIndex, storyID
+  # Defensive fallback: if template selection ever misses, use the first
+  # template rather than crashing the whole dataset build.
+  template = USER_TEMPLATES[0] unless typeof template is 'function'
   userContent = template(String(promptText ? '').trim())
   assistantContent = String(completionText ? '').trim()
   messages: [
