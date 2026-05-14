@@ -541,6 +541,7 @@ buildControls = ->
       'base_ite'
       'oracle_ite'
       'lora_ite'
+      'lora_story_ite'
       'diary_ite'
       'diary_translate_ite'
       'prompt_ite'
