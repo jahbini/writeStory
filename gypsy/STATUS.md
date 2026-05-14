@@ -91,6 +91,16 @@ them as speed benchmarks.
 
 ## Relationship To Rusty
 
-Rusty remains the correctness and teaching path for the token journey through
-the model. Gypsy is now the production speed path. The two are independent;
-nothing in the gypsy path depends on the rusty bridge.
+Rusty and Gypsy live on sibling branches:
+
+- on `main` (this branch): `gypsy/` is populated, `rusty/` is empty.
+  Gypsy is the production speed path here.
+- on the `rusty` branch: `rusty/` is populated, `gypsy/` is empty.
+  Rusty is the earlier teaching/correctness path for the token journey
+  through the model.
+
+The two paths are independent — nothing in the gypsy codepath depends on
+Rusty's code, and the production build on `main` does not need Rusty to
+be present. References to Rusty in this directory's docs (and in
+`GPT/gypsy_strategy.md`) are cross-branch architectural lessons kept on
+`main` on purpose. To read Rusty's actual source, `git checkout rusty`.

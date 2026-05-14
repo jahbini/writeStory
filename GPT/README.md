@@ -36,6 +36,25 @@ Rules:
 
 Current repository assumptions worth preserving:
 - the repo is pipe-centric; active workspaces live under `pipes/<organization>_<model>/`
+- the `_ite` recipes are the production covering set of capabilities. Recipes
+  without the `_ite` suffix (e.g. `full`, `story`, `train_lora`,
+  `train_markdown`, `dialog_reword`, `kag_oracle`, `story_kag_chat`, `test`)
+  are earlier-capability references and are not the production targets.
+- each recipe is a 1:1 conversion of one Python notebook. Each step/script
+  in a recipe is the direct equivalent of one notebook step. The DAG runner
+  adds dependency edges (`needs` / `makes`), reactivity (the memo), and
+  restartability on top of that notebook structure.
+- persistence layers (by lifetime):
+  - long-term, cross-run: per-pipe SQLite (stories, paragraph groups, KAG
+    entries from the emotion oracle). New steps that produce reusable
+    structured data should land it in SQLite.
+  - transient, single-run: `out/`, `data/`, `params/`, `state/`. These are
+    scratch space for one pipeline run. Diary/story generations also live
+    here and are not (currently) recorded in SQLite.
+  - crash-resume: when a recipe dies mid-DAG, `state/` and `params/`
+    together let the runner pick up at the dead step on next launch. That is
+    why the UI prominently features the `Pipeline Death` pane and the
+    `Erase pipeline.json` button.
 - overrides are recipe-scoped: prefer `override/<pipeline>.yaml` for human
   overrides associated with a selected config recipe
 - legacy `override.yaml` remains a fallback/bootstrap file for older pipes and
@@ -49,17 +68,23 @@ Current repository assumptions worth preserving:
 - the UI layout is intentionally split into:
   - left column for death/output/step/log visibility
   - right column for one merged controls pane
-- the UI should not poll every 2 seconds all the time; it now polls continuously only while a pipeline is active or cooling down
-- the `rusty/` branch introduces a future resident Rust ML bridge:
-  - JS/CoffeeScript continues to own orchestration, DAGs, Memo, YAML, SQLite, and UI
-  - Rust/C++ owns ML lifetime, tensors, KV cache structures, Metal/unified-memory pressure, and model residency
-  - JS may only hold opaque handles for ML-side objects
-  - the current smoke verifier source of truth is `session_layer_residency_probe`
-  - current corrected fastsmoke generation uses q_norm/k_norm before RoPE and
-    validates deterministic same-session generation rather than the old
-    pre-q_norm token sequence
-  - latest passing fastsmoke generated token ids are `[15, 13, 16]`; major
-    projection backends are Metal and handle counts are clean
+- the UI should not poll every 2 seconds all the time; it polls continuously
+  while EITHER a pipeline run OR a merge job is active, and stops otherwise
+  so the user can edit fields without the UI yanking values back from disk
+  (see `GPT/ui/ui_server.md` for the full polling gate rule)
+- the two native generation paths live on sibling git branches:
+  - `main` (this branch): `gypsy/` is populated. `rusty/` is empty.
+    The production native addon is gypsy (`metal/metal_llm.node`, built
+    via `binding.gyp` against system MLX). See `gypsy/STATUS.md` and
+    `GPT/gypsy_strategy.md` for live status and standards.
+  - `rusty` branch: `rusty/` is populated. `gypsy/` is empty. Rusty was
+    the earlier teaching/correctness path for the token journey through
+    the model.
+- references to Rusty in `gypsy/README.md`, `gypsy/PROTOCOL_DESIGN.md`,
+  `gypsy/DIRECTIVE_FAILURES.md`, and `GPT/gypsy_strategy.md` are
+  cross-branch architectural lessons kept on `main` on purpose — they
+  describe what Rusty taught, not where Rusty's code lives. To consult
+  Rusty's actual source, `git checkout rusty`.
 
 Suggested use:
 - when a step fails, inspect its memory file first

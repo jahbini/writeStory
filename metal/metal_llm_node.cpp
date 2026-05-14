@@ -6864,7 +6864,11 @@ Napi::Value GenerateProtocol(const Napi::CallbackInfo& info) {
     // versus float32 and matches Qwen's training precision.
     const mlx::core::Dtype compute_dtype = mlx::core::bfloat16;
     const std::uint32_t requested_count = static_cast<std::uint32_t>(std::max<double>(max_tokens, 0));
-    const std::uint32_t generated_count = std::min<std::uint32_t>(requested_count, 64);
+    // Safety upper bound (~144 MB extra KV at bf16 on Qwen3-4B). The caller's
+    // requested max_tokens is honored up to this ceiling; raise it deliberately
+    // if a use case actually needs longer generations.
+    constexpr std::uint32_t generation_token_ceiling = 4096;
+    const std::uint32_t generated_count = std::min<std::uint32_t>(requested_count, generation_token_ceiling);
 
     std::vector<ResidentArrayRecord> logits_arrays;
     std::string logits_error;

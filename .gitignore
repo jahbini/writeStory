@@ -16,6 +16,10 @@ rusty/**/mlx_smoke
 metal/*.node
 metal/build/
 
+# Local MLX source checkout (optional dev aid for reading MLX internals;
+# the production build links against system MLX, e.g. Homebrew).
+mlx/
+
 node_modules/
 pipes/
 pnpm-lock.yaml
@@ -27,7 +31,6 @@ __pycache__/
 .env
 env/
 test/
-test.sh
 
 # Jupyter
 .ipynb_checkpoints/

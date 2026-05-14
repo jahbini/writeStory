@@ -18,7 +18,9 @@ Inputs:
 - optional param `system_prompt`
 - optional param `output_file_prefix` (default `prompt_gypsy`)
 - optional param object `mlx`:
-  - `max-tokens` / `max_tokens` / `maxTokens` (default 256)
+  - `max-tokens` / `max_tokens` / `maxTokens` (default 1600; native ceiling
+    is 4096 — raise `generation_token_ceiling` in
+    `metal/metal_llm_node.cpp` if a use case needs more)
   - `temp` / `temperature` (default 0)
   - `top-k` / `top_k` / `topK` (default 40 when temp>0, else 0)
   - `top-p` / `top_p` / `topP` (default 1.0)

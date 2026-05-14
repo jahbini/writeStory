@@ -1,0 +1,82 @@
+run:
+  model: Qwen/Qwen3-4B-Instruct-2507
+  output_dir: out
+  data_dir: data
+  training_dir: build/train
+  loraLand: build/model
+  debug_s: false
+  debug_mlx: false
+  debug_sql: false
+
+artifacts:
+  lora_cycle_state:
+    target: out/lora_cycle_state.json
+  lora_remaining_count:
+    target: out/lora_remaining_count.json
+  selected_story_ids:
+    target: out/selected_story_ids.json
+  train_rows:
+    target: build/train/train.jsonl
+  valid_rows:
+    target: build/train/valid.jsonl
+  test_rows:
+    target: build/train/test.jsonl
+  lora_stdout:
+    target: out/lora_train.txt
+  lora_run_record:
+    target: out/lora_run_record.json
+  trained_story_ids:
+    target: out/trained_story_ids.json
+
+# Story selection is identical to the original lora_ite recipe.
+select_lora_stories_ite:
+  run: lora_ite/select_lora_stories_ite.coffee
+  depends_on: []
+  needs: []
+  makes: [lora_cycle_state, lora_remaining_count, selected_story_ids]
+  batch_size: 4
+
+# This is the differentiator from `lora_ite.yaml`: the dataset step emits
+# chat-formatted rows ({"messages": [{role:"user", ...}, {role:"assistant", ...}]})
+# so the LoRA adapter trains on the SAME structural shape that the Qwen3-Instruct
+# base model expects at inference time via `generate_prompt_gypsy_ite`. The
+# old `build_lora_dataset_ite` produces plain {"text": "..."} continuation
+# rows, which is the right format for a base (non-Instruct) model but a
+# distribution mismatch for an Instruct model used in chat mode.
+build_lora_story_dataset_ite:
+  run: lora_ite/build_lora_story_dataset_ite.coffee
+  depends_on: [select_lora_stories_ite]
+  needs: [selected_story_ids]
+  makes: [train_rows, valid_rows, test_rows]
+
+# Training params tuned for a real first-cycle pass on a 13-story corpus.
+# Compared to lora_ite.yaml's defaults (iters: 20, lr: 5e-5), these run
+# longer and at a more typical LoRA learning rate so the adapter actually
+# learns voice rather than nudging logits by a tiny amount.
+#
+# For incremental cycles after the first, drop iters to ~50-100 and keep
+# `resume_adapter_file` pointing at the prior cycle's adapter.
+#
+# IMPORTANT: for a "fresh load" delete build/adapter/adapters.safetensors
+# before this step runs, or remove `resume_adapter_file` from the first
+# cycle, otherwise this step will keep training on top of the prior
+# adapter state.
+run_lora_train_ite:
+  run: lora_ite/run_lora_train_ite.coffee
+  depends_on: [build_lora_story_dataset_ite]
+  needs: [lora_cycle_state, selected_story_ids, train_rows, valid_rows, test_rows]
+  makes: [lora_stdout, lora_run_record]
+  test_only: false
+  adapter_path: build/adapter
+  resume_adapter_file: build/adapter/adapters.safetensors
+  mlx:
+    batch-size: 1
+    iters: 500
+    max-seq-length: 2048
+    learning-rate: 0.0001
+
+record_lora_training_ite:
+  run: lora_ite/record_lora_training_ite.coffee
+  depends_on: [run_lora_train_ite]
+  needs: [lora_run_record]
+  makes: [trained_story_ids]

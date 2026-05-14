@@ -68,7 +68,7 @@ generate_prompt_gypsy_ite:
   prompt_text: [ UI_textarea, "" ]
   system_prompt:
   mlx:
-    max-tokens: 256
+    max-tokens: 1600
     temp: 0.7
     top-k: 40
     top-p: 1.0
