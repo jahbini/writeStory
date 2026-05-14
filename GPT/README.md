@@ -6,6 +6,13 @@ Purpose:
 - help trace downstream failures back to upstream causes
 - preserve current pipe/workspace assumptions so future Codex work does not drift back to older top-level-only behavior
 
+**Read this first when starting a session on anything DAG-shaped:
+[`pipeline_architecture.md`](pipeline_architecture.md)** — the framework is
+the universal starting point for notebook conversion / batch automation
+across multiple unrelated domains (writeStory's ML pipelines + publicist's
+PR outreach). When work is ambiguous, separate "framework orbit" from
+"domain orbit" before acting.
+
 Rules:
 - keep files short and factual
 - update a step memory when its contract changes
