@@ -31,86 +31,35 @@ buildStoryGroups = (paragraphs) ->
     startIndex += groupSize
   groups
 
-buildFragmentParagraphs = (paragraphs) ->
-  rval = []
-  return rval unless Array.isArray(paragraphs)
-  return rval if paragraphs.length is 0
-  firstPara = paragraphs[0] ? ''
-  if firstPara.trim().length > 0
-    rval.push firstPara.trim()
-  currentText = rval.join "\n\n"
-  if currentText.length < 300 and paragraphs.length > 2
-    secondPara = paragraphs[1] ? ''
-    if secondPara.trim().length > 0
-      rval.push secondPara.trim()
-  rval
-
-splitSingleParagraphTrainingText = (paragraph) ->
-  text = String(paragraph ? '').trim()
-  return null unless text.length >= 120
-  sentences = text.split /(?<=[.!?])\s+/
-    .map (sentence) -> String(sentence ? '').trim()
-    .filter (sentence) -> sentence.length > 0
-  if sentences.length >= 2
-    promptSentences = 1
-    if sentences.length >= 4
-      promptSentences = Math.max 1, Math.floor(sentences.length / 3)
-    prompt = sentences.slice(0, promptSentences).join " "
-    completion = sentences.slice(promptSentences).join " "
-    if prompt.length > 0 and completion.length > 0
-      return prompt: prompt, completion: completion
-  words = text.split /\s+/
-    .map (word) -> String(word ? '').trim()
-    .filter (word) -> word.length > 0
-  return null unless words.length >= 24
-  splitAt = Math.max 8, Math.floor(words.length * 0.35)
-  return null if splitAt >= words.length
-  prompt = words.slice(0, splitAt).join " "
-  completion = words.slice(splitAt).join " "
-  return null unless prompt.length > 0 and completion.length > 0
-  prompt: prompt, completion: completion
-
-# A pool of user-side instruction templates. We rotate through these so the
-# adapter learns that the *voice* is the constant — the instruction wrapper can
-# vary. Each template takes the prompt text as the body the user is showing
-# the model. Variety here protects against the adapter memorizing one trigger
-# phrase.
-USER_TEMPLATES = [
-  (prompt) -> "Continue this in your distinctive voice:\n\n#{prompt}"
-  (prompt) -> "Pick up from here and write the rest, in the same style:\n\n#{prompt}"
-  (prompt) -> "Keep going. Stay in the same voice and tone:\n\n#{prompt}"
-  (prompt) -> "Write what comes next:\n\n#{prompt}"
-  (prompt) -> "Finish this passage, keeping the same narrator and feel:\n\n#{prompt}"
+# Short generic instructions that match what a real user types at inference time.
+# All voice prose belongs in the assistant turn; nothing here echoes the target style.
+USER_INSTRUCTIONS = [
+  "Write a passage in your distinctive voice."
+  "Tell me a story in your voice."
+  "Share another story in your usual style."
+  "Write something in your usual way."
+  "Continue in your distinctive voice."
+  "Write a passage the way you normally do."
+  "Give me a story in the way only you would tell it."
 ]
 
-# A deterministic rotation over USER_TEMPLATES indexed by row count + storyID.
-# Deterministic so a re-run with the same data produces identical rows
-# (important for reproducible LoRA training).
-#
-# storyID may be numeric or a non-numeric string; derive a stable numeric
-# offset from a char-code sum so different stories start at different
-# template offsets without ever producing NaN (which would index the
-# template array out of bounds and yield `undefined`).
+# Deterministic rotation keyed on (rowIndex, storyID). storyIDs are
+# non-numeric strings; derive the numeric offset via char-code sum so
+# Number() coercion is never attempted and NaN is impossible.
 storyOffset = (storyID) ->
   key = String(storyID ? '')
   sum = 0
   sum += key.charCodeAt(i) for i in [0...key.length]
   sum
 
-pickTemplate = (rowIndex, storyID) ->
-  index = (rowIndex + storyOffset(storyID)) %% USER_TEMPLATES.length
-  USER_TEMPLATES[index]
+pickInstruction = (rowIndex, storyID) ->
+  index = (rowIndex + storyOffset(storyID)) %% USER_INSTRUCTIONS.length
+  USER_INSTRUCTIONS[index]
 
-makeChatRow = (promptText, completionText, rowIndex, storyID) ->
-  template = pickTemplate rowIndex, storyID
-  # Defensive fallback: if template selection ever misses, use the first
-  # template rather than crashing the whole dataset build.
-  template = USER_TEMPLATES[0] unless typeof template is 'function'
-  userContent = template(String(promptText ? '').trim())
-  assistantContent = String(completionText ? '').trim()
+makeChatRow = (instructionText, assistantText) ->
   messages: [
-    {role: "user", content: userContent}
-    {role: "assistant", content: assistantContent}
+    {role: "user",      content: String(instructionText ? '').trim()}
+    {role: "assistant", content: String(assistantText   ? '').trim()}
   ]
 
 @step =
@@ -131,12 +80,11 @@ makeChatRow = (promptText, completionText, rowIndex, storyID) ->
     rows = []
     rowIndex = 0
     rowsWritten = 0
-    fallbackRowsWritten = 0
+    skippedOverBudget = 0
     storiesProcessed = 0
 
     MAX_TOTAL_TOKENS = 1024
-    SAFETY_TOKENS = 96   # slightly more headroom than the text-format step,
-                         # because the chat wrapper adds tokens of its own
+    SAFETY_TOKENS = 96   # headroom for chat-format wrapper tokens
 
     for storyID in selectedStoryIDs
       continue unless storyID?
@@ -163,88 +111,24 @@ makeChatRow = (promptText, completionText, rowIndex, storyID) ->
         continue unless Array.isArray(groupParagraphs)
         continue unless groupParagraphs.length > 0
 
-        fragmentParagraphs = buildFragmentParagraphs groupParagraphs
-        continue unless fragmentParagraphs.length > 0
+        instruction   = pickInstruction rowIndex, storyID
+        assistantText = groupParagraphs.join "\n\n"
 
-        promptText = fragmentParagraphs.join "\n\n"
-        promptTokens = estimateTokens promptText
-
-        completionStartIndex = fragmentParagraphs.length
-        completionParagraphs = groupParagraphs.slice completionStartIndex
-
-        if completionParagraphs.length is 0
-          if groupParagraphs.length is 1
-            fallback = splitSingleParagraphTrainingText groupParagraphs[0]
-            if fallback?
-              rows.push makeChatRow(fallback.prompt, fallback.completion, rowIndex, storyID)
-              rowIndex += 1
-              rowsWritten += 1
-              fallbackRowsWritten += 1
+        totalTokens = estimateTokens(instruction) + estimateTokens(assistantText) + SAFETY_TOKENS
+        if totalTokens > MAX_TOTAL_TOKENS
+          console.log "[build_lora_story_dataset_ite] skipping over-budget group for story #{storyID}: ~#{totalTokens} tokens"
+          skippedOverBudget += 1
           continue
 
-        maxCompletionTokens = MAX_TOTAL_TOKENS - promptTokens - SAFETY_TOKENS
-        throw new Error "[#{L.stepName}] prompt too large for token budget on story #{storyID}" if maxCompletionTokens < 80
-
-        chunkParagraphs = []
-        chunkTokens = 0
-
-        flushChunk = ->
-          return unless chunkParagraphs.length > 0
-          completionText = chunkParagraphs.join "\n\n"
-          rows.push makeChatRow(promptText, completionText, rowIndex, storyID)
-          rowIndex += 1
-          rowsWritten += 1
-          chunkParagraphs = []
-          chunkTokens = 0
-          return
-
-        for para, idx in completionParagraphs
-          paraTokens = estimateTokens para
-          proposedTokens = chunkTokens + paraTokens
-
-          if chunkParagraphs.length > 0 and proposedTokens > maxCompletionTokens
-            flushChunk()
-
-          if paraTokens > maxCompletionTokens
-            sentences = para.split /(?<=[.!?])\s+/
-            sentenceChunk = []
-            sentenceTokens = 0
-
-            for sentence in sentences
-              cleanSentence = String(sentence ? '').trim()
-              continue unless cleanSentence.length > 0
-              sentTokens = estimateTokens cleanSentence
-              proposedSentenceTokens = sentenceTokens + sentTokens
-
-              if sentenceChunk.length > 0 and proposedSentenceTokens > maxCompletionTokens
-                completionText = sentenceChunk.join " "
-                rows.push makeChatRow(promptText, completionText, rowIndex, storyID)
-                rowIndex += 1
-                rowsWritten += 1
-                sentenceChunk = []
-                sentenceTokens = 0
-
-              sentenceChunk.push cleanSentence
-              sentenceTokens += sentTokens
-
-            if sentenceChunk.length > 0
-              completionText = sentenceChunk.join " "
-              rows.push makeChatRow(promptText, completionText, rowIndex, storyID)
-              rowIndex += 1
-              rowsWritten += 1
-            continue
-
-          chunkParagraphs.push para
-          chunkTokens += paraTokens
-
-        if chunkParagraphs.length > 0
-          flushChunk()
+        rows.push makeChatRow(instruction, assistantText)
+        rowIndex += 1
+        rowsWritten += 1
 
       storiesProcessed += 1
 
     console.log "[build_lora_story_dataset_ite] stories processed:", storiesProcessed
     console.log "[build_lora_story_dataset_ite] chat-formatted rows written:", rowsWritten
-    console.log "[build_lora_story_dataset_ite] single-paragraph fallback rows:", fallbackRowsWritten
+    console.log "[build_lora_story_dataset_ite] over-budget groups skipped:", skippedOverBudget
 
     if rows.length is 0
       shutdownAt = new Date().toISOString()
@@ -260,9 +144,6 @@ makeChatRow = (promptText, completionText, rowIndex, storyID) ->
       return
 
     # Same-rows-everywhere matches the existing build_lora_dataset_ite contract.
-    # The downstream `run_lora_train_ite` can split these out if needed; for a
-    # small corpus, using the full set for train/valid/test is the established
-    # convention in this repo.
     L.make 'train_rows', rows
     L.make 'valid_rows', rows
     L.make 'test_rows', rows

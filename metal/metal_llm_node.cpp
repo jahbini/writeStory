@@ -589,6 +589,7 @@ struct GypsyTokenizerRecord {
 struct GypsyAdapterRecord {
     std::string handle;
     std::string adapter_dir;
+    double lora_scale = 20.0;
     Napi::ObjectReference metadata;
     std::vector<TensorDescriptor> tensor_descriptors;
 };
@@ -1908,6 +1909,10 @@ Napi::Value LoadAdapter(const Napi::CallbackInfo& info) {
     GypsyAdapterRecord record;
     record.handle = handle;
     record.adapter_dir = dir;
+    {
+        const double cfg_scale = metadata.Get("scale").As<Napi::Number>().DoubleValue();
+        record.lora_scale = cfg_scale > 0 ? cfg_scale : 20.0;
+    }
     record.metadata = Napi::Persistent(metadata);
     record.tensor_descriptors = LoadTensorDescriptorsFromSafetensors(dir);
     gypsy_adapters.emplace(handle, std::move(record));
@@ -7116,7 +7121,7 @@ Napi::Value GenerateProtocol(const Napi::CallbackInfo& info) {
     bool cpu_attention_used_anywhere = false;
     bool direct_metal_attention_used_anywhere = false;
     std::uint64_t adapter_applied_projection_count = 0;
-    constexpr float generation_adapter_scale = 20.0f;
+    const float generation_adapter_scale = adapter ? static_cast<float>(adapter->lora_scale) : 20.0f;
     const char* full_logit_summary_env = std::getenv("GYPSY_FULL_LOGIT_SUMMARY");
     const bool full_logit_summary = full_logit_summary_env != nullptr &&
         std::string(full_logit_summary_env) == "1";
@@ -8684,12 +8689,30 @@ Napi::Value GenerateProtocol(const Napi::CallbackInfo& info) {
             }
         } else {
             const auto final_readback_start = std::chrono::steady_clock::now();
-            mlx::core::array top_id_array = mlx::core::astype(mlx::core::argmax(logits), mlx::core::int32);
-            mlx::core::array top_score_array = mlx::core::flatten(mlx::core::take(logits, top_id_array));
-            mlx::core::eval(top_id_array, top_score_array);
+            const mlx::core::array selected_id = [&]() -> mlx::core::array {
+                if (temperature <= 0.0) {
+                    return mlx::core::astype(mlx::core::argmax(logits), mlx::core::int32);
+                }
+                mlx::core::array scaled = logits * static_cast<float>(1.0 / temperature);
+                const int k = static_cast<int>(top_k);
+                if (k > 0 && k < vocab_size) {
+                    mlx::core::array sorted = mlx::core::sort(scaled, 0);
+                    mlx::core::eval(sorted);
+                    const float threshold = sorted.data<float>()[vocab_size - k];
+                    scaled = mlx::core::where(
+                        scaled >= threshold,
+                        scaled,
+                        mlx::core::array(-std::numeric_limits<float>::infinity()));
+                }
+                return mlx::core::astype(
+                    mlx::core::random::categorical(scaled),
+                    mlx::core::int32);
+            }();
+            mlx::core::array top_score_array = mlx::core::flatten(mlx::core::take(logits, selected_id));
+            mlx::core::eval(selected_id, top_score_array);
             timing_buckets.readback_ms += elapsed_ms_since(final_readback_start);
             timing_buckets.readback_count += 2;
-            local_top_token_id = top_id_array.data<int32_t>()[0];
+            local_top_token_id = selected_id.data<int32_t>()[0];
             local_top_token_score = top_score_array.data<float>()[0];
             local_top.emplace_back(local_top_token_score, local_top_token_id);
             }

@@ -8,6 +8,7 @@ Current UI layout contract:
   - `Pipeline Death`
   - `Outputs`        (only the `out/*` files)
   - `Diary Files`    (its own panel — kept separate from `Outputs`)
+  - `Logs`           (log files from `logs/`; starts collapsed by default via `data-default-collapsed="1"`)
   - `Steps`
   - `Latest Err`
   - `Latest Log`
@@ -29,7 +30,12 @@ Collapsible sections:
 - per-section state persists in `localStorage` under
   `ui-collapse:<header-text-slug>` so the user's open/closed preferences
   survive page reloads.
-- defaults: every section opens. The user opts into collapsing.
+- default behavior: every section opens. The user opts into collapsing.
+- to make a panel start closed by default, add `data-default-collapsed="1"`
+  to the `.panel` element. `setupCollapsibles()` checks that attribute as the
+  fallback when no `localStorage` entry exists yet. Once the user opens or
+  closes the panel, `localStorage` takes over and the attribute is ignored.
+  Current panel with this attribute: `Logs`.
 
 Per-pane fullscreen expand:
 - two classes of element get a small `⤢` button in their top-right corner:
@@ -117,12 +123,17 @@ Branch portability:
   drives the cross-branch propagation.
 
 Known pitfalls:
+- do not re-merge `Outputs`, `Diary Files`, and `Logs` into a single panel —
+  each has its own collapse toggle and serves a distinct file class
+- the `Logs` panel lists `logs/*.log` and `logs/*.err` files sorted newest-first
+  (descending by filename); Outputs and Diary are ascending. Do not normalise
+  them to the same direction — newest-first is more useful for logs.
+- `log_files` entries use relative paths (`logs/<name>`) so they pass
+  `isAllowedFilePath` and open correctly in the file viewer modal on dblclick
 - do not silently reintroduce always-on polling
 - do not narrow the polling gate back to pipeline-only — that breaks
   termination notification for merges (the May 2026 fix)
 - do not split `Latest Err` and `Latest Log` into one pane unless explicitly requested
-- do not re-merge `Outputs` and `Diary Files` into a single panel — they
-  are intentionally separate so each gets its own collapse toggle
 - do not treat `control_override.yaml` as a substitute for
   `override/<pipeline>.yaml`
 - if a new recipe needs freeform text from the UI, prefer `UI_textarea` over inventing a separate ad hoc endpoint

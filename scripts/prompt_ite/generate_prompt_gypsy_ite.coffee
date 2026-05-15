@@ -91,7 +91,7 @@ numberParam = (value, defaultValue) ->
 
 buildControls = (L) ->
   mlx = L.param('mlx', {}) ? {}
-  temperature = numberParam firstDefined(mlx.temperature, mlx.temp), 0
+  temperature = numberParam firstDefined(mlx.temperature, mlx.temp), 0.7
   topKDefault = if temperature > 0 then 40 else 0
   controls =
     max_tokens: intParam firstDefined(mlx.max_tokens, mlx['max-tokens'], mlx.maxTokens), 256
@@ -177,6 +177,7 @@ resolvePrompt = (L) ->
 
     generation = result.generation ? {}
     timing = generation.timing ? {}
+    logitsSummary = generation.logits_summary ? {}
     rawDecoded = String(generation.raw_decoded_text ? '')
     cleanedDecoded = String(generation.cleaned_decoded_text ? rawDecoded)
     text = cleanGeneratedText prompt, cleanedDecoded
@@ -187,6 +188,19 @@ resolvePrompt = (L) ->
       tokenizer_dir: tokenizerDir
       adapter_requested: adapterDir?
       adapter_dir: adapterDir
+      # Native-side adapter diagnostics — these tell us whether the adapter
+      # is actually being applied during generation, not just requested.
+      # adapter_active is true only when the LoRA delta was applied to at
+      # least one projection; adapter_applied_projection_count is the count
+      # of per-layer-per-token projection calls that actually found and used
+      # lora_a/lora_b tensors. If requested-but-not-active, the adapter
+      # tensor names did not match what the native loader looks up.
+      adapter_active: logitsSummary.adapter_active
+      adapter_applied_projection_count: logitsSummary.adapter_applied_projection_count
+      adapter_scale: logitsSummary.adapter_scale
+      adapter_layer_range: logitsSummary.adapter_layer_range
+      adapter_applied_to_prefill: logitsSummary.adapter_applied_to_prefill
+      adapter_applied_to_decode: logitsSummary.adapter_applied_to_decode
       chat: controls.chat
       chat_template_present: formattedInfo?.chat_template_present ? false
       chat_template_applied: formattedInfo?.chat_template_applied ? false

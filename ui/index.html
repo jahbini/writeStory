@@ -459,6 +459,11 @@
           <div id="diary-files" class="files"></div>
         </section>
 
+        <section class="panel" data-default-collapsed="1">
+          <h2>Logs</h2>
+          <div id="log-files" class="files"></div>
+        </section>
+
         <section class="panel">
           <h2>Steps</h2>
           <table class="steps">
@@ -950,6 +955,7 @@
       renderOverrideEditor(data.controls || {});
       renderFiles(byId('out-files'), data.out_files);
       renderFiles(byId('diary-files'), data.diary_files);
+      renderFiles(byId('log-files'), data.log_files);
       renderSteps(data.steps);
       byId('latest-log').textContent = data.latest_log || '';
       byId('latest-err').textContent = data.latest_err || '';
@@ -1257,7 +1263,9 @@
         header.classList.add('section-toggle');
         const keyText = (header.textContent || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-');
         const storageKey = 'ui-collapse:' + keyText;
-        if (localStorage.getItem(storageKey) === '1') {
+        const defaultCollapsed = container.dataset.defaultCollapsed === '1';
+        const stored = localStorage.getItem(storageKey);
+        if (stored !== null ? stored === '1' : defaultCollapsed) {
           container.classList.add('collapsed');
         }
         header.addEventListener('click', () => {

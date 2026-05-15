@@ -49,18 +49,23 @@ build_lora_story_dataset_ite:
   needs: [selected_story_ids]
   makes: [train_rows, valid_rows, test_rows]
 
-# Training params tuned for a real first-cycle pass on a 13-story corpus.
-# Compared to lora_ite.yaml's defaults (iters: 20, lr: 5e-5), these run
-# longer and at a more typical LoRA learning rate so the adapter actually
-# learns voice rather than nudging logits by a tiny amount.
+# DESIGN: this recipe trains in many tiny gentle batches, not one big run.
+#   - select_lora_stories_ite picks only 4 stories per cycle
+#   - run_lora_train_ite RESUMES on build/adapter/adapters.safetensors
+#     (the resume IS the accumulation mechanism — each batch builds on the
+#     last; never "fix" it by deleting the adapter mid-cycle)
+#   - the UI continuous-loop repeats batch after batch until every story
+#     is consumed, then select_lora_stories_ite shuts the pipeline down
+#   - `out/lora_train.txt` is overwritten each batch — it shows only the
+#     LAST batch, never the whole run
 #
-# For incremental cycles after the first, drop iters to ~50-100 and keep
-# `resume_adapter_file` pointing at the prior cycle's adapter.
-#
-# IMPORTANT: for a "fresh load" delete build/adapter/adapters.safetensors
-# before this step runs, or remove `resume_adapter_file` from the first
-# cycle, otherwise this step will keep training on top of the prior
-# adapter state.
+# `iters` is per-batch and MUST stay tiny. Each 4-story batch should only
+# NUDGE the adapter; the voice accumulates across dozens of batches, not
+# within one. iters ~5 is the intended value. Driving a single batch to
+# low loss (e.g. iters 80 reaching train loss < 0.02) memorizes that
+# batch and, across the loop, produces an overfit / no-output adapter.
+# Small batches also mean a power loss or thermal shutdown on the mini
+# only costs the in-flight batch — every completed batch is checkpointed.
 run_lora_train_ite:
   run: lora_ite/run_lora_train_ite.coffee
   depends_on: [build_lora_story_dataset_ite]
@@ -71,7 +76,7 @@ run_lora_train_ite:
   resume_adapter_file: build/adapter/adapters.safetensors
   mlx:
     batch-size: 1
-    iters: 500
+    iters: 5
     max-seq-length: 2048
     learning-rate: 0.0001
 
